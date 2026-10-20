@@ -149,6 +149,10 @@ export function createInProcessRunner({ ctx = null, config = null, logger = null
 
     const record = {
       sessionId,
+      cwd: cwd === "" ? null : cwd,
+      preset: presetId === "" ? null : presetId,
+      provider: agentOptions?.provider ?? null,
+      model: agentOptions?.model ?? null,
       agent: handle.agent,
       dispose: typeof handle.dispose === "function" ? handle.dispose.bind(handle) : null,
       chatKey: typeof chatKey === "string" ? chatKey : "",
@@ -165,6 +169,13 @@ export function createInProcessRunner({ ctx = null, config = null, logger = null
       }
     }
     checkPolicyOnce(record.agent);
+    diag("info", "进程内 agent 配置", {
+      sessionId: record.sessionId,
+      cwd: record.cwd ?? null,
+      preset: record.preset ?? null,
+      provider: record.provider ?? null,
+      model: record.model ?? null
+    });
     diag("info", "进程内建了一个 Agent", { sessionId, chatKey: record.chatKey || null, created: state.created });
     return { record };
   }
