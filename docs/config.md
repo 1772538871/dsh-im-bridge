@@ -63,6 +63,7 @@
 | `runner` | `headless`（每条消息起新进程，最稳）/ `sdk`（常驻子进程，冷启动只付一次）/ `inprocess`（进程内，支持 QQ 审批，依赖 DSH 内部 API） | `headless` |
 | `nodePath` | 跑 DSH 的 node；空 = 当前进程 | `""` |
 | `binPath` | DSH 入口 `lib/bin.js` 的绝对路径 | `""` |
+| `agentPreset` | 用哪个 Agent 预设（决定人格与工具集）；空 = 不挂预设 | `""` |
 | `profile` | 用哪个 DSH profile（`sdk` 执行器必须指向 sdk profile） | `im-bridge` |
 | `cwd` | DSH 的工作目录（它能改的范围）；空 = `<rootDir>/workspace` | `""` |
 | `timeoutMs` | 单轮超时 | `300000` |

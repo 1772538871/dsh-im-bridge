@@ -37,6 +37,7 @@ const COMMON_FIELDS = [
   field('log.level', '日志级别', 'select', { placeholder: 'info', options: ['debug', 'info', 'warn', 'error'], help: '可选：debug / info / warn / error' }),
   field('dsh.binPath', 'DSH 入口路径（留空自动探测）', 'text', { placeholder: 'E:\\Local\\npm\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js' }),
   field('dsh.profile', 'DSH profile 名', 'text', { required: true, placeholder: 'im-bridge' }),
+  field('dsh.agentPreset', 'Agent 预设（留空 = 不挂预设；web 默认 liangshen）', 'text', { placeholder: 'liangshen' }),
   field('dsh.cwd', 'DSH 工作目录（留空用 <数据目录>/workspace）', 'text'),
   field('dsh.timeoutMs', '单次 DSH 调用超时（毫秒）', 'number', { placeholder: '300000' }),
   field(

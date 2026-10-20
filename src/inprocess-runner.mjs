@@ -48,6 +48,11 @@ export function createInProcessRunner({ ctx = null, config = null, logger = null
     return undefined;
   }
 
+  function presetOf() {
+    const wanted = dsh.agentPreset;
+    return typeof wanted === "string" ? wanted.trim() : "";
+  }
+
   function cwdOf() {
     return typeof dsh.cwd === "string" && dsh.cwd !== "" ? dsh.cwd : "";
   }
@@ -100,12 +105,30 @@ export function createInProcessRunner({ ctx = null, config = null, logger = null
 
     const agentOptions = agentOptionsOf();
     const cwd = cwdOf();
+    // 预设决定人格与工具集：web profile 里 selectedDefault 是 liangshen，不显式 mount 的话
+    // 进程内 agent 只能拿到基座作用域的工具，和 GUI 里同名的会话体验会不一致
+    const presets = service("agentPresets");
+    const wantedPreset = presetOf();
+    let presetId = "";
+    if (presets && typeof presets.resolve === "function" && wantedPreset !== "") {
+      try {
+        presetId = String((await presets.resolve(wantedPreset))?.id ?? "");
+      } catch (error) {
+        diag("warn", "解析 agentPreset 失败，退回不挂预设", { preset: wantedPreset, error: errorText(error) });
+        presetId = "";
+      }
+    }
     const options = {
       sessionId,
-      ...(cwd === "" ? {} : { meta: { cwd } }),
+      ...(cwd === "" ? {} : { meta: { cwd, ...(presetId === "" ? {} : { agentPreset: presetId }) } }),
+      ...(presetId === "" ? {} : { meta: { cwd: cwd === "" ? undefined : cwd, agentPreset: presetId } }),
       agentOptions,
       // setup 只做组合、不驱动 agent：真正的驱动在 runTurn 里
-      setup: async () => {}
+      setup: async (agentCtx) => {
+        if (presetId !== "" && presets && typeof presets.mount === "function") {
+          await presets.mount(agentCtx, presetId);
+        }
+      }
     };
 
     let handle;
