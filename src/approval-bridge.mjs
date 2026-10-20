@@ -5,8 +5,8 @@
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
 
 // 回复词表宁窄勿宽：认不出来就交回正常消息流程，用户想发一个"1"给模型时不会被吞掉
-const ALLOW_WORDS = ["1", "y", "yes", "ok", "同意", "允许", "放行"];
-const REJECT_WORDS = ["2", "n", "no", "拒绝", "不行", "不同意"];
+const ALLOW_WORDS = ["1", "y", "yes", "ok", "okay", "同意", "允许", "放行", "确认", "好", "好的", "可以", "是的", "准"];
+const REJECT_WORDS = ["2", "n", "no", "拒绝", "不行", "不同意", "不行", "不要", "不允许", "别", "驳回"];
 const CANCEL_WORDS = ["0", "cancel", "取消"];
 
 function errorText(error) {
