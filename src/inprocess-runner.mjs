@@ -118,10 +118,14 @@ export function createInProcessRunner({ ctx = null, config = null, logger = null
         presetId = "";
       }
     }
+    // 会话头里的 cwd 必须真的存在且是绝对路径：PTC 的 win_bash 之类工具要求
+    // "calling session with a working directory"，缺了它连 echo 都跑不起来
+    const meta = {};
+    if (cwd !== "") meta.cwd = cwd;
+    if (presetId !== "") meta.agentPreset = presetId;
     const options = {
       sessionId,
-      ...(cwd === "" ? {} : { meta: { cwd, ...(presetId === "" ? {} : { agentPreset: presetId }) } }),
-      ...(presetId === "" ? {} : { meta: { cwd: cwd === "" ? undefined : cwd, agentPreset: presetId } }),
+      ...(Object.keys(meta).length === 0 ? {} : { meta }),
       agentOptions,
       // setup 只做组合、不驱动 agent：真正的驱动在 runTurn 里
       setup: async (agentCtx) => {
