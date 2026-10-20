@@ -1,149 +1,116 @@
 # dsh-im-bridge
 
-把 QQ 消息（文字 / 图片 / 文档 / 语音）转发给**本机**的 [DSH](https://github.com/deepseek-ai/deepseek-harness) 处理，再把 DSH 的回答发回 QQ。
+**用 QQ 遥控你电脑上的 DSH**：发文字 / 图片 / 文档 / 语音，本机 DSH 干活，结果回到 QQ。不联网、不上云，电脑就是服务器。
 
-它不是云服务，是把这台电脑当一台简易服务器：QQ ↔ NapCat ↔ 本仓库的桥接进程 ↔ `dsh --profile <profile>` 子进程。
+![架构](docs/images/architecture.svg)
 
-```
-QQ 客户端 ── QQNT 协议 ──> NapCat ──OneBot 11 (WebSocket)──> dsh-im-bridge ──stdin/stdout(NDJSON)──> dsh 子进程
-   ^                                                                                                    │
-   └──────────────────────── 回复文本 ◄─────────────────────────────────────────────────────────────────┘
-```
+[![ci](https://github.com/1772538871/dsh-im-bridge/actions/workflows/ci.yml/badge.svg)](https://github.com/1772538871/dsh-im-bridge/actions/workflows/ci.yml)
+![node](https://img.shields.io/badge/node-%E2%89%A520-3c873a)
+![license](https://img.shields.io/badge/license-MIT-blue)
 
-> 📖 **看不懂那些设置？先读 [使用手册（大白话版）](docs/使用手册.md)** —— 每一项都写清了「是干嘛的 / 要不要管 / 填错会怎样」，以及第一次开机的 7 步。
+---
 
-## 特性
+## 它能做什么 / 不能做什么
 
-- **零运行时依赖**：纯 Node ESM，只用 Node 内置 `WebSocket`/`fetch`/`child_process`，`git clone` 后直接 `node bin/bridge.mjs`。
-- **四类消息**：文字直接进 prompt；图片/文档/语音落盘后把**绝对路径**告诉 DSH，DSH 自己决定怎么读。
-- **多轮对话**：每个 QQ 会话绑定一个 DSH `--session-id`，追问有上下文。
-- **数据目录随便放**：所有附件、日志、会话映射都在配置的 `storage.rootDir` 下，默认 `E:\dsh-im-bridge-data`；写在 `C:\` 会主动告警。
-- **白名单 + 并发闸**：不是谁发消息都能驱动这台电脑，见 [docs/SECURITY.md](docs/SECURITY.md)。
-
-## 前置条件
-
-| 依赖 | 说明 |
+| ✅ 能 | ❌ 不能 |
 | --- | --- |
-| Node.js ≥ 20 | 用到内置全局 `WebSocket` |
-| DSH | `@deepseek-ai/dsh`，并且有一个**能用模型**的 profile（见下） |
-| NapCat | QQNT 外壳，提供 OneBot 11 接口，见 [docs/NAPCAT.md](docs/NAPCAT.md) |
+| 你发一句话，本机 DSH 算完把答案发回 QQ | 机器人**不能主动**找你（平台限制，必须你先发） |
+| 发图片 / 文档 / 语音 —— 落到本机目录，DSH 拿到**绝对路径**自己去读 | DSH 听不见语音（要配 `asr.command` 转写） |
+| 多轮上下文（每个 QQ 会话绑定一个 DSH 会话） | 出站目前只有**文字**（DSH 生成的文件还不能发回 QQ） |
+| 只允许白名单里的人驱动这台电脑；有并发闸和限流 | 想装软件、改系统文件这类高危操作默认被拒 |
+| 支持两个平台：**QQ 官方机器人** / **NapCat（OneBot 11）** | 微信：栏目留着，但**未实现** |
 
-### 准备一个能跑的 DSH profile
+---
 
-原生 `headless` profile 禁用了 `credentials`，无人值守调用会直接 `MISSING_CREDENTIAL`。基于 headless 复制一个并只把 credentials 打开：
+## 两条路，选一条
 
-```powershell
-dsh --profile im-bridge --from-default-profile headless --dump-config | Out-Null
-# 编辑 %DSH_HOME%\profiles\im-bridge\cordis.patch.yml，写入：
-# - id: credentials
-#   disabled: false
-```
+| | 插件模式（推荐，会用的人 90% 选这个） | 命令行模式（开发者 / 不要 GUI） |
+| --- | --- | --- |
+| 是什么 | 装进 DSH，设置侧栏多一个「dsh bot」，点点就能用 | 纯 Node 进程，配置文件 + 命令行启动 |
+| 适合 | 日常使用，想可视化配置 | 想在服务器/NAS 上跑，或接自己的进程管理 |
+| 入口 | DSH → 设置 → **dsh bot** | `node bin/bridge.mjs` |
+| 文档 | [docs/install.md · 插件](docs/install.md#方式一插件推荐) | [docs/install.md · 命令行](docs/install.md#方式二命令行) |
 
-验证（约 5–6 秒出结果）：
+---
 
-```powershell
-'回复 OK' | dsh --profile im-bridge --json -
-# 末行应为 {"type":"final","text":"OK"}
-```
-
-## 作为 DSH 插件安装（设置里多一个「dsh bot」）
-
-这个仓库同时是一个 **DSH 插件包**：装进 profile 后，DSH 的设置侧栏会多出「dsh bot」一页，可以在里面选平台、填参数、开关运行时，不用再手改配置文件。
+## 快速开始（插件，约 5 分钟）
 
 ```powershell
-# 1) 装进你要用的 profile（本地目录直接装）
-dsh plugin --profile web add E:\Projects\dsh-im-bridge
-# 2) 重启 DSH（组合在启动时完成，热更不会新增插件行）
+# 1) 取代码（HTTPS，不需要配 SSH key）
+git clone https://github.com/1772538871/dsh-im-bridge.git
+cd dsh-im-bridge
+
+# 2) 装进 DSH 的 web profile
+dsh plugin --profile web add .
+
+# 3) 重启 DSH（插件组合只在启动时完成）
 dsh web
 ```
 
-装完后：设置侧栏 →「dsh bot」→ 选平台（`qq-napcat` / `qq-official`）→ 填参数 → 保存 → 点启动。
+4. 打开 DSH → **设置 → dsh bot**
+5. 选平台 → 填参数 → **保存** → **启动**
+   - **QQ 官方机器人**：填 AppID / AppSecret（开放平台后台拿），机器人需在「开发体验用户」里加上你自己的 QQ
+   - **NapCat**：填 WebSocket 地址（默认 `ws://127.0.0.1:3001`）和 accessToken，详见 [docs/NAPCAT.md](docs/NAPCAT.md)
+6. 用你的 QQ 给机器人发一句「你好」
 
-### 安装时可能踩的两个坑
+> 需要：Node.js ≥ 20、DSH ≥ 0.2.1-rc.2、一个能用的机器人。装在别处遇到问题先看 [docs/troubleshooting.md](docs/troubleshooting.md)。
 
-| 现象 | 原因 / 处理 |
+---
+
+## 界面预览
+
+设置页就是 DSH 设置侧栏里多出来的一页：
+
+```
+设置 → dsh bot
+  平台      [ QQ 官方机器人 ▾ ]
+  AppID     1029*****
+  AppSecret ***            ← 只存本机，页面永远回显 ***
+  白名单    你的 QQ 号（留空 = 拒绝启动）
+  数据目录  E:\dsh-im-bridge-data
+  [保存]  [启动]  [停止]   ← 状态行：运行中 · 平台 qq-official · 收到 12 / 已处理 11
+```
+
+> 截图（`docs/images/settings.png` / `docs/images/chat.png`）待补：见 [docs/images/README.md](docs/images/README.md)。
+
+---
+
+## 文档
+
+| 想看什么 | 去哪 |
 | --- | --- |
-| `ERR_PNPM_UNEXPECTED_STORE`（store 位置不一致） | 该 profile 的 `node_modules` 当初是用另一个 store 装的。把现存 store 显式传给 pnpm：`dsh plugin --profile web add <路径> --store-dir C:\Users\<你>\AppData\Local\pnpm\store\v10`（值可从 `profiles/<name>/node_modules/.modules.yaml` 的 `storeDir` 读到） |
-| 装完设置里没有「dsh bot」 | ① 没重启（必须重启 `dsh web`）；② 包里缺 `dsh.bundle.patch`（CLI 只会警告 "installed as a plain dependency, not a profile layer"）；③ `profiles/<name>/package.json` 的 `dsh.profile.bundles` 里没有 `dsh-im-bridge` |
+| **完全不懂技术**，只想按步骤点 | [docs/manual.zh.md](docs/manual.zh.md)（大白话手册） |
+| 安装、平台接入、profile 准备 | [docs/install.md](docs/install.md) |
+| 每一项配置是什么意思 | [docs/config.md](docs/config.md) |
+| 不听话了怎么查 | [docs/troubleshooting.md](docs/troubleshooting.md) |
+| NapCat 接入细节 | [docs/NAPCAT.md](docs/NAPCAT.md) |
+| 安全边界（**建议先读**） | [docs/SECURITY.md](docs/SECURITY.md) |
+| DSH 升级后怎么验证 / 提交规范 | [CONTRIBUTING.md](CONTRIBUTING.md) |
+| 版本变更 | [CHANGELOG.md](CHANGELOG.md) |
 
-### 插件把配置存在哪
+---
 
-- 配置：`<DSH_HOME>/dsh-bot/config.json`（可用 `DSH_BOT_CONFIG` 覆盖）。**设置页写的就是这个文件**，和命令行共用同一份。
-- 消息附件 / 日志 / 会话映射：仍然在 `storage.rootDir`（默认 `E:\dsh-im-bridge-data`），落 `C:\` 会告警。
-- `AppSecret`、`accessToken` 这类密钥只存进上面那个配置文件，**不会写进 profile 的 patch 文件**，也不会在 `GET /config` 里明文返回（回显 `***`，提交 `***` 表示不修改）。
+## 兼容性与升级
 
-### 设置页能配什么
-
-平台（`qq-napcat` / `qq-official`）、启用开关、白名单（一行一个 QQ 号 / 群号）、群内是否必须 @、限流与并发、回复分段长度、数据目录与保留天数、日志级别、ASR 转写命令、DSH 入口（`binPath` / `profile` / `cwd` / 超时 / 权限模式），以及平台专属项（NapCat 的 `wsUrl`+`accessToken`；官方机器人的 `appId`+`appSecret`）。
-## 快速开始（命令行方式）
+- 已验证的 DSH 版本写在 `package.json` 的 `dsh.compatibility.dshReleases`；不在表里会在自检时告警。
+- DSH 升级后跑一条命令，四条关键面（清单 / 设置页 bundle / 配置 / 版本）一次验完：
 
 ```powershell
-git clone git@github.com:1772538871/dsh-im-bridge.git
-cd dsh-im-bridge
-Copy-Item bridge.config.example.json bridge.config.json
+node scripts/selfcheck.mjs
 ```
 
-然后至少改这四项。注意：`bridge.config.example.json` 带 `//` 注释（本项目的加载器认 JSONC），**不要拿别的工具直接 `JSON.parse` 它**，复制成 `bridge.config.json` 后同样带注释也能跑。
+- 三个执行器可切换（`dsh.runner`）：`headless`（默认，最稳）/ `sdk`（常驻子进程，冷启动只付一次）/ `inprocess`（进程内，支持 QQ 审批，依赖 DSH 内部 API，升级可能碎）。碎了切回 `sdk`，聊天照常。
 
-| 键 | 怎么填 |
-| --- | --- |
-| `storage.rootDir` | **必填**，任意绝对路径，例如 `E:\dsh-im-bridge-data`；写在 C 盘会告警 |
-| `dsh.binPath` | **必填**，DSH 入口 js。本机示例：`E:\Local\npm\node_modules\@deepseek-ai\dsh\lib\bin.js`。不知道在哪就跑 `(Get-Command dsh).Source` 反查，或干脆设环境变量 `DSH_BIN` |
-| `dsh.profile` | 上面建的 `im-bridge` |
-| `security.userWhitelist` | 你自己的 QQ 号；**留空 = 谁都不放行**（这是故意的安全默认） |
+---
 
-```powershell
-node bin/bridge.mjs --check --config bridge.config.json   # 校验 + 打印生效摘要；配置不合格 exit 1
-node bin/bridge.mjs --config bridge.config.json           # 正式跑（连 OneBot WS）
-```
+## 安全
 
-> `dsh.binPath` 为空时 `--check` 会以「dsh.binPath 为空」退出 1 —— 这是预期行为，不是 bug。
+这个插件等于给白名单里的人开放了本机的 DSH。**装完第一件事是填白名单**（留空会拒绝启动），并且：
 
-自测一条链路但不碰 QQ：
+- 机器人用小号；`AppSecret` 只存 `<DSH_HOME>/dsh-bot/config.json`，不会写进 profile 配置；
+- 默认 `workspace-write`：DSH 只能改自己的工作目录；
+- 完整威胁模型见 [docs/SECURITY.md](docs/SECURITY.md)。
 
-```powershell
-node bin/bridge.mjs --dry-run "用一句话自我介绍" --config bridge.config.json
-```
+## 许可证
 
-## 配置参考
-
-见 [`bridge.config.example.json`](bridge.config.example.json)。关键项：
-
-| 键 | 作用 |
-| --- | --- |
-| `onebot.wsUrl` | NapCat 的正向 WebSocket 地址，默认 `ws://127.0.0.1:3001` |
-| `onebot.accessToken` | 与 NapCat 里配的 token 一致；拼在 URL 的 `?access_token=` 上 |
-| `dsh.binPath` / `dsh.profile` / `dsh.cwd` | 子进程命令；`cwd` **必须固定**（session 续接按 cwd 校验） |
-| `dsh.timeoutMs` | 单次调用超时，默认 300 秒 |
-| `dsh.permissionMode` | 传给子进程的 `DSH_PERMISSION_MODE`，默认 `workspace-write` |
-| `storage.rootDir` | **所有落盘数据的根**，改这里就能换盘 |
-| `security.userWhitelist` / `groupWhitelist` | 谁可以驱动这台电脑 |
-| `security.groupRequireAt` | 群里必须 @ 机器人才响应 |
-| `security.rateLimitPerMinute` / `maxConcurrentRuns` | 每用户限流 / 全局并发（每次调用约 330MB） |
-| `reply.maxChunkChars` | 长回答按段拆条发送 |
-| `asr.command` | 语音转写钩子（默认空 = 不转写，只把文件路径给 DSH） |
-
-## 数据目录
-
-```
-<storage.rootDir>/media/<YYYY-MM-DD>/<private_123|group_456>/<ts>-<kind>-<name>.<ext>
-<storage.rootDir>/workspace/         dsh.cwd 的默认值
-<storage.rootDir>/sessions.json      每个 QQ 会话 ↔ DSH session 的映射
-<storage.rootDir>/logs/bridge-*.log
-```
-
-`storage.retentionDays` 到期会清理 `media/` 下的旧目录，`workspace/` 与日志不删。
-
-## 排错
-
-| 现象 | 原因 / 处理 |
-| --- | --- |
-| `MISSING_CREDENTIAL` | profile 没开 `credentials`，见上文；或给子进程设 `DEEPSEEK_API_KEY` |
-| `session "..." does not exist` | `dsh.cwd` 或 `dsh.profile` 变了；续接要求两者一致，改回或删 `sessions.json` 对应键 |
-| 子进程输出空、像卡住 | 用 `--json` 并检查末行是否有 `final`；没有 `error` 事件却没 `final` 多为超时被杀 |
-| `spawn EPERM` / `ripgrep launch failed` | DSH 被跑在受限父进程里，子进程继承受限令牌。用普通终端启动桥接进程 |
-| NapCat 连不上 | 确认 NapCat 开了**正向** WebSocket、端口一致、token 一致 |
-
-## 许可
-
-MIT，见 [LICENSE](LICENSE)。
+MIT © 1772538871

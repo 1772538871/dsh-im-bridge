@@ -72,5 +72,6 @@ src/inprocess-runner.mjs  进程内执行器（配合审批桥）
 src/onebot|qqbot/    两个平台适配器
 src/pipeline.mjs     平台无关管线
 bin/                 命令行入口
-docs/                使用手册 / NapCat 接入 / 安全说明
+docs/                install / config / troubleshooting / manual.zh / NAPCAT / SECURITY
+docs/internal/       内部设计契约（对外不用读）
 ```

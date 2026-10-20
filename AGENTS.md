@@ -10,6 +10,11 @@
 - **不要在 `src/pipeline.mjs` 里塞平台特例**：平台差异只能经 `deps` 注入（`parseEvent` / `planMedia` / `sendReply` / `chatKeyOf`）。
 - **不要把 DSH 内部 API 放进关键路径**：`inprocess` 与审批桥属可降级特性，任何时候 `dsh.runner=headless|sdk` 都必须独立可用。
 
+## 文档
+
+- 对外：README（落地页）+ docs/{install,config,troubleshooting,manual.zh,NAPCAT,SECURITY}。
+- 内部契约在 docs/internal/，**不要**再往仓库根目录放开发任务书。
+
 ## 必须做
 
 - 新行为必须有测试（`node --test`），网络与子进程用注入假件。

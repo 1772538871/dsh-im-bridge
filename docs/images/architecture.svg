@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="920" height="300" viewBox="0 0 920 300" font-family="-apple-system, Segoe UI, Microsoft YaHei, sans-serif">
+  <rect width="920" height="300" fill="#0f1116"/>
+  <text x="32" y="40" fill="#8b93a7" font-size="14">dsh-im-bridge · 消息走向</text>
+
+  <rect x="32" y="70" width="150" height="70" rx="10" fill="#1b1f2a" stroke="#2f3646"/>
+  <text x="107" y="102" fill="#e6e9f0" font-size="15" text-anchor="middle">你的 QQ</text>
+  <text x="107" y="124" fill="#8b93a7" font-size="12" text-anchor="middle">手机 / 桌面</text>
+
+  <rect x="230" y="58" width="190" height="42" rx="8" fill="#182333" stroke="#2b4a6b"/>
+  <text x="325" y="84" fill="#bcd6f2" font-size="13" text-anchor="middle">QQ 开放平台（沙箱网关）</text>
+  <rect x="230" y="112" width="190" height="42" rx="8" fill="#1c2430" stroke="#3a4152"/>
+  <text x="325" y="138" fill="#a9b2c5" font-size="13" text-anchor="middle">NapCat / OneBot 11（可选）</text>
+
+  <rect x="470" y="70" width="190" height="70" rx="10" fill="#1b2a22" stroke="#2f5c3f"/>
+  <text x="565" y="100" fill="#c6ecd2" font-size="15" text-anchor="middle">dsh-im-bridge</text>
+  <text x="565" y="122" fill="#8fbf9f" font-size="12" text-anchor="middle">白名单 · 落盘 · 分段 · 会话</text>
+
+  <rect x="710" y="70" width="178" height="70" rx="10" fill="#241f2b" stroke="#4a3a5c"/>
+  <text x="799" y="100" fill="#e2d3f0" font-size="15" text-anchor="middle">本机 DSH</text>
+  <text x="799" y="122" fill="#b09ac4" font-size="12" text-anchor="middle">headless / sdk / 进程内</text>
+
+  <defs><marker id="a" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6" fill="#5b6478"/></marker></defs>
+  <line x1="182" y1="105" x2="228" y2="88" stroke="#5b6478" stroke-width="1.5" marker-end="url(#a)"/>
+  <line x1="182" y1="112" x2="228" y2="130" stroke="#5b6478" stroke-width="1.5" marker-end="url(#a)"/>
+  <line x1="420" y1="105" x2="468" y2="105" stroke="#5b6478" stroke-width="1.5" marker-end="url(#a)"/>
+  <line x1="660" y1="105" x2="708" y2="105" stroke="#5b6478" stroke-width="1.5" marker-end="url(#a)"/>
+
+  <path d="M799 140 C799 210, 565 210, 480 175" fill="none" stroke="#3f5c49" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#a)"/>
+  <path d="M470 205 C260 205, 120 190, 100 148" fill="none" stroke="#3f5c49" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#a)"/>
+  <text x="470" y="245" fill="#7f8b81" font-size="12">回复按原路返回：DSH 的答案 → 桥接（分段 / 被动回复 / 兜底主动消息）→ QQ</text>
+  <text x="470" y="268" fill="#5d6675" font-size="12">附件（图片 / 文档 / 语音）落在 storage.rootDir，prompt 里给 DSH 绝对路径</text>
+</svg>
