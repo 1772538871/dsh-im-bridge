@@ -118,7 +118,7 @@ export function createInProcessRunner({ ctx = null, config = null, logger = null
     return options;
   }
 
-  async function openHandle(sessionId, chatKey) {
+  async function openHandle(sessionId, chatKey, options0 = {}) {
     const agents = service("agents");
     const models = service("agentDefaultModel");
     // 服务缺失只可能是"这次装在了没有这些服务的 profile 里"，用 not_configured 让人去查配置
@@ -130,7 +130,7 @@ export function createInProcessRunner({ ctx = null, config = null, logger = null
     // 预设决定人格与工具集：web profile 里 selectedDefault 是 liangshen，不显式 mount 的话
     // 进程内 agent 只能拿到基座作用域的工具，和 GUI 里同名的会话体验会不一致
     const presets = service("agentPresets");
-    const wantedPreset = presetOf();
+    const wantedPreset = options0.skipPreset === true ? "" : presetOf();
     let presetId = "";
     if (presets && typeof presets.resolve === "function" && wantedPreset !== "") {
       try {
@@ -356,6 +356,7 @@ export function createInProcessRunner({ ctx = null, config = null, logger = null
     if (stopped) return finish("runner_error", { extra: { error: "runner 已停止" } });
     if (!service("agents")) return finish("not_configured", { echoId: givenId });
 
+    let retriedWithoutPreset = false;
     state.busy = true;
     state.runs += 1;
     try {
@@ -383,6 +384,26 @@ export function createInProcessRunner({ ctx = null, config = null, logger = null
       }
 
       const { texts, endKind, endError } = collectTurn(record.agent?.session, turn.startSeq);
+      // 预设可能只提供"延迟加载"的工具，模型服务端会拒绝整次请求；这时去掉预设重建会话再试一次，
+      // 让基座工具（默认非延迟）顶上来——比把整条链路判死更有用（只重试一次）
+      if (record.preset !== null && !retriedWithoutPreset && /defer_loading|deferred/i.test(String(endError ?? ""))) {
+        retriedWithoutPreset = true;
+        diag("warn", "工具集全为延迟加载，已去掉预设重试一次", { sessionId: sid, preset: record.preset, turnError: String(endError).slice(0, 160) });
+        await dropHandle(sid, { cancel: true });
+        const retryOpened = await ensureHandle(sid, chatKey, { skipPreset: true });
+        if (retryOpened && retryOpened.record) {
+          const retryTurn = await runTurn(retryOpened.record, prompt, budget);
+          if (!retryTurn.timedOut) {
+            const again = collectTurn(retryOpened.record.agent?.session, retryTurn.startSeq);
+            const retryText = again.texts.length > 0 ? again.texts[again.texts.length - 1] : "";
+            if (typeof again.endError === "string" && again.endError !== "") {
+              return finish("model_error", { text: retryText, extra: { turnEndKind: again.endKind, turnError: again.endError, withoutPreset: true } });
+            }
+            return finish(retryText === "" ? "no_final" : "ok", { text: retryText, extra: { withoutPreset: true } });
+          }
+        }
+      }
+
       const sessionService = service("sessions");
       if (sessionService && typeof sessionService.flush === "function") {
         try {
