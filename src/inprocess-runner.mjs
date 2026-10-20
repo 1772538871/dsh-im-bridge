@@ -249,11 +249,35 @@ export function createInProcessRunner({ ctx = null, config = null, logger = null
     try {
       handle = await agents.create(options);
     } catch (error) {
-      // DSH 重启后 sessions.json 里还留着上一轮的 sessionId，create 会以"已存在"拒绝：
-      // 只在这种错误上退回 resume 接上历史，其它错误原样上抛（别用第二次尝试掩盖真原因）
-      if (!/already|exist|duplicate|opening/i.test(errorText(error)) || typeof agents.resume !== "function") throw error;
-      diag("debug", "agents.create 被拒，改用 agents.resume 接上历史会话", { sessionId, error: errorText(error) });
-      handle = await agents.resume({ resumeSessionId: sessionId, agentOptions, setup: options.setup });
+      const firstText = errorText(error);
+      if (/active write handle/i.test(firstText)) {
+        // 这条会话的写句柄被别处占着（典型：你在网页里把它打开了）。先清掉本进程的残留，再试一次；
+        // 还不行就换一个新会话继续——答案比"续上旧历史"重要，旧历史仍留在磁盘上。
+        const stale = handles.get(sessionId);
+        if (stale) {
+          handles.delete(sessionId);
+          try { await stale.dispose?.(); } catch { /* 释放失败不影响后面换新会话 */ }
+        }
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        try {
+          handle = await agents.create(options);
+        } catch (again) {
+          const fresh = "session-" + randomUUID();
+          diag("warn", "会话写句柄被别处占用（网页里打开过？），改用新会话继续", {
+            oldSessionId: sessionId,
+            newSessionId: fresh,
+            error: errorText(again).slice(0, 200)
+          });
+          handle = await agents.create({ ...options, sessionId: fresh });
+          sessionId = fresh;
+        }
+      } else if (/already|exist|duplicate|opening/i.test(firstText) && typeof agents.resume === "function") {
+        // DSH 重启后 sessions.json 里还留着上一轮的 sessionId，create 会以"已存在"拒绝
+        diag("debug", "agents.create 被拒，改用 agents.resume 接上历史会话", { sessionId, error: firstText });
+        handle = await agents.resume({ resumeSessionId: sessionId, agentOptions, setup: options.setup });
+      } else {
+        throw error;
+      }
     }
     if (!handle || !handle.agent) throw new Error("agents.create 没有返回 agent");
 
@@ -453,6 +477,10 @@ export function createInProcessRunner({ ctx = null, config = null, logger = null
       }
       if (opened.error) return finish(opened.error, { echoId: givenId });
       const record = opened.record;
+      if (typeof record.sessionId === "string" && record.sessionId !== sid) {
+        diag("warn", "本轮改用新会话", { from: sid, to: record.sessionId });
+        sid = record.sessionId;
+      }
 
       let turn;
       try {
