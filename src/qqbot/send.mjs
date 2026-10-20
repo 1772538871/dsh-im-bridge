@@ -26,6 +26,15 @@ export function buildTextBody({ text, messageId = '', seq = 1 } = {}) {
   return body;
 }
 
+// 实测：被动回复用的 msg_id 会随接收会话失效（40034024「msg_id 无效或越权」），
+// 这时退化成主动消息仍能送达，所以回复链路不能因为被动被拒就整条丢掉
+function isPassiveRejection(error) {
+  const code = Number(error?.code ?? error?.errCode ?? NaN);
+  if (code === 40034024) return true;
+  const text = String(error?.message ?? error ?? '');
+  return text.includes('msg_id') || text.includes('40034024');
+}
+
 export async function sendQqReply({ client, message, text, config = {}, logger = null } = {}) {
   const wanted = Number(config?.reply?.maxChunkChars);
   const limit = Number.isFinite(wanted) && wanted > 0 ? wanted : DEFAULT_MAX_CHARS;
@@ -66,8 +75,18 @@ export async function sendQqReply({ client, message, text, config = {}, logger =
       await client.sendMessage({ chatType, target, body });
       sent += 1;
     } catch (error) {
+      // 被动回复被拒时改走主动消息；单段失败也不能让后面的段一起丢（前面可能已经送达）
+      if (messageId !== '' && isPassiveRejection(error)) {
+        try {
+          await client.sendMessage({ chatType, target, body: buildTextBody({ text: toSend[index] }) });
+          sent += 1;
+          warn(logger, '被动回复被拒，已改用主动消息送达', { index: index + 1, error: String(error?.message ?? error).slice(0, 200) });
+          continue;
+        } catch (fallbackError) {
+          warn(logger, 'QQ Bot 发送失败（主动消息也失败）', { index: index + 1, error: String(fallbackError?.message ?? fallbackError).slice(0, 200) });
+        }
+      }
       failed += 1;
-      // 单段失败不能让后面的段一起丢：长回复里前面可能已经送达
       warn(logger, 'QQ Bot 发送失败', { index: index + 1, total: toSend.length, error: String(error?.message ?? error) });
     }
   }
