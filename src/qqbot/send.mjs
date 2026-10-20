@@ -5,6 +5,20 @@ import { chunkText } from '../onebot/send.mjs';
 const DEFAULT_MAX_CHARS = 1500;
 // 文档：单聊每个消息最多回复 4 次，群聊最多回复 5 次
 const PASSIVE_LIMIT = { private: 4, group: 5 };
+// 同一个 msg_id 下 msg_seq 必须严格递增：之前每次回复都从 1 起，
+// 第二条卡片被平台判"去重"（40054005）静默丢弃
+const seqByMessageId = new Map();
+const SEQ_CACHE_LIMIT = 500;
+function nextSeq(messageId) {
+  const used = seqByMessageId.get(messageId) ?? 0;
+  const seq = used + 1;
+  seqByMessageId.set(messageId, seq);
+  if (seqByMessageId.size > SEQ_CACHE_LIMIT) {
+    const oldest = seqByMessageId.keys().next().value;
+    if (oldest !== undefined) seqByMessageId.delete(oldest);
+  }
+  return seq;
+}
 
 function warn(logger, message, meta) {
   const fn = logger?.warn;
@@ -30,9 +44,10 @@ export function buildTextBody({ text, messageId = '', seq = 1 } = {}) {
 // 这时退化成主动消息仍能送达，所以回复链路不能因为被动被拒就整条丢掉
 function isPassiveRejection(error) {
   const code = Number(error?.code ?? error?.errCode ?? NaN);
-  if (code === 40034024) return true;
+  // 40034024 = msg_id 无效或越权；40054005 = 消息被去重（msg_seq 重复）
+  if (code === 40034024 || code === 40054005) return true;
   const text = String(error?.message ?? error ?? '');
-  return text.includes('msg_id') || text.includes('40034024');
+  return text.includes('msg_id') || text.includes('40034024') || text.includes('去重') || text.includes('40054005');
 }
 
 export async function sendQqReply({ client, message, text, config = {}, logger = null } = {}) {
@@ -70,7 +85,7 @@ export async function sendQqReply({ client, message, text, config = {}, logger =
   }
 
   for (let index = 0; index < toSend.length; index += 1) {
-    const body = buildTextBody({ text: toSend[index], messageId, seq: startSeq + index });
+    const body = buildTextBody({ text: toSend[index], messageId, seq: messageId ? nextSeq(messageId) : startSeq + index });
     try {
       await client.sendMessage({ chatType, target, body });
       sent += 1;

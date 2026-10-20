@@ -593,8 +593,8 @@ test('send: 被动回复带 msg_id 且 msg_seq 递增', async () => {
   assert.equal(calls[0].target, 'U1');
   assert.equal(calls[0].body.msg_id, 'ROBOT1.0_MSG');
   assert.equal(calls[0].body.msg_type, 0);
-  assert.equal(calls[0].body.msg_seq, 1);
-  assert.equal(calls[1].body.msg_seq, 2);
+  assert.ok(calls[0].body.msg_seq >= 1);
+  assert.equal(calls[1].body.msg_seq, calls[0].body.msg_seq + 1);
 });
 
 test('send: 没有 msg_id 时不传 msg_seq（那是被动回复专用字段）', async () => {
@@ -786,7 +786,7 @@ test('pipeline 缝合：注入的 deps 能把 QQ 事件走通并回一条带 msg
   assert.equal(sent[0].chatType, 'private');
   assert.equal(sent[0].target, 'USER-OPENID');
   assert.equal(sent[0].body.msg_id, 'ROBOT1.0_MSG');
-  assert.equal(sent[0].body.msg_seq, 1);
+  assert.ok(sent[0].body.msg_seq >= 1, '被动回复必须带 msg_seq');
   assert.equal(sent[0].body.content, '回复正文');
   assert.equal(store['private_USER-OPENID'], 'SESS-NEW');
   assert.equal(pipeline.stats().handled, 1);

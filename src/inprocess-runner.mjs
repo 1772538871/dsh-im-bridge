@@ -146,6 +146,30 @@ export function createInProcessRunner({ ctx = null, config = null, logger = null
     return options;
   }
 
+  /**
+   * GUI 的"工作区"分组不是按 cwd 自动归类的，而是一张显式成员表（workspace.json 的 sessionIds）。
+   * 我们自建的会话不在表里，于是永远显示在"未分组"。这里把新会话登记进 cwd 对应的工作区。
+   * 找不到就建一个（path 必须是已存在的目录，否则 registry 会拒）。
+   */
+  async function attachToWorkspace(sessionId) {
+    const registry = service("workspaceRegistry");
+    if (!registry || typeof registry.resolveByPath !== "function") return;
+    const cwd = cwdOf();
+    if (cwd === "") return;
+    try {
+      let workspace = await registry.resolveByPath(cwd);
+      if (!workspace && typeof registry.create === "function") {
+        workspace = await registry.create(cwd);
+      }
+      if (workspace && typeof workspace.attachSession === "function") {
+        await workspace.attachSession(sessionId);
+        diag("info", "会话已登记到工作区", { sessionId, workspace: workspace.path ?? cwd });
+      }
+    } catch (error) {
+      diag("warn", "登记到工作区失败（不影响本次回答）", { sessionId, error: errorText(error).slice(0, 200) });
+    }
+  }
+
   async function openHandle(sessionId, chatKey, options0 = {}) {
     const agents = service("agents");
     const models = service("agentDefaultModel");
@@ -221,6 +245,8 @@ export function createInProcessRunner({ ctx = null, config = null, logger = null
       createdAt: now()
     };
     handles.set(sessionId, record);
+    // 新建会话后登记到 cwd 对应的工作区（resume 时 handles 里已有记录，不会重复登记）
+    void attachToWorkspace(sessionId);
     state.created += 1;
     // 登记给审批桥：只有登记过的 agent，桥才会把它的审批请求转发到 IM
     if (bridge && typeof bridge.own === "function") {
