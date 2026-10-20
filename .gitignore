@@ -1,0 +1,11 @@
+# 依赖（本项目零运行时依赖，这里只是防手滑）
+node_modules/
+
+# 测试沙箱目录（core.test.mjs 优先用仓库内的这个位置）
+.test-tmp/
+
+# 本地真实配置（含 QQ token）与运行日志
+bridge.config.json
+*.log
+.env
+.DS_Store

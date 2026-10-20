@@ -1,0 +1,21 @@
+{
+  "name": "dsh-im-bridge",
+  "version": "0.1.0",
+  "description": "把 QQ 消息（文字/图片/文档/语音）转给本机 DSH 处理并回复的桥接服务",
+  "type": "module",
+  "bin": {
+    "dsh-im-bridge": "bin/bridge.mjs"
+  },
+  "scripts": {
+    "test": "node --test",
+    "start": "node bin/bridge.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/1772538871/dsh-im-bridge.git"
+  }
+}

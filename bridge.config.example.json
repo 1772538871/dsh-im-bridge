@@ -1,0 +1,58 @@
+// dsh-im-bridge 配置示例（可直接跑）
+// 用法：node bin/bridge.mjs --config bridge.config.example.json
+// 说明：本文件允许 // 注释与尾逗号，配置加载器会先剥掉注释再解析。
+// storage.rootDir 只要“绝对路径”，盘符随你（E:\ 或 D:\ 都行）；
+// 唯一例外：落在 C 盘启动时会告警，因为产线数据不进 C 盘（用户规则）。
+{
+  "onebot": {
+    // NapCat / OneBot 11 的 WebSocket 地址
+    "wsUrl": "ws://127.0.0.1:3001",
+    // 非空时会拼成 ?access_token=...
+    "accessToken": "",
+    "reconnectMinMs": 1000,
+    "reconnectMaxMs": 30000
+  },
+  "dsh": {
+    // 留空 = 用当前 node（process.execPath）
+    "nodePath": "",
+    // 留空 = 先看环境变量 DSH_BIN，再在 DSH_HOME 附近自动找，找不到就由 --check 报错
+    "binPath": "",
+    "profile": "im-bridge",
+    // 留空 = <storage.rootDir>/workspace
+    "cwd": "",
+    "timeoutMs": 300000,
+    "permissionMode": "workspace-write",
+    "env": {}
+  },
+  "storage": {
+    // 必填：改成任何绝对路径都行，写在 C 盘会告警
+    "rootDir": "E:\\dsh-im-bridge-data",
+    "maxFileBytes": 104857600,
+    "retentionDays": 30
+  },
+  "security": {
+    "userWhitelist": [],
+    "groupWhitelist": [],
+    "allowPrivate": true,
+    "allowGroup": true,
+    "groupRequireAt": true,
+    "rateLimitPerMinute": 6,
+    "maxConcurrentRuns": 2,
+    "maxPromptChars": 8000
+  },
+  "reply": {
+    "maxChunkChars": 1500,
+    "errorPrefix": "[bridge] ",
+    "showSessionId": false
+  },
+  "asr": {
+    "command": "",
+    "args": [],
+    "timeoutMs": 60000
+  },
+  "log": {
+    // 留空 = <storage.rootDir>/logs
+    "dir": "",
+    "level": "info"
+  }
+}
