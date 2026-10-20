@@ -9,6 +9,8 @@ export const SECRET_FIELDS = ['qqNapcat.accessToken', 'qqOfficial.appSecret'];
 export const SECRET_MASK = '***';
 
 const PERMISSION_MODES = ['read-only', 'workspace-write', 'danger-full-access'];
+// headless=每条消息起一个 dsh 进程（稳，单次 ~5.3s）；sdk=常驻一个进程走 JSON-RPC（~1.2s/轮）
+export const DSH_RUNNERS = ['headless', 'sdk'];
 const LOG_LEVELS = ['debug', 'info', 'warn', 'error'];
 
 export const DEFAULT_CONFIG = {
@@ -30,7 +32,19 @@ export const DEFAULT_CONFIG = {
   log: { dir: '', level: 'info' },
   qqNapcat: { wsUrl: 'ws://127.0.0.1:3001', accessToken: '', reconnectMinMs: 1000, reconnectMaxMs: 30000 },
   qqOfficial: { appId: '', appSecret: '', sandbox: true },
-  dsh: { nodePath: '', binPath: '', profile: 'im-bridge', cwd: '', timeoutMs: 300000, permissionMode: 'workspace-write' }
+  dsh: {
+    nodePath: '',
+    binPath: '',
+    profile: 'im-bridge',
+    cwd: '',
+    timeoutMs: 300000,
+    permissionMode: 'workspace-write',
+    // 默认保持 headless：不动现有行为，用户显式切到 sdk 才走常驻进程
+    runner: 'headless',
+    provider: 'deepseek-official',
+    model: 'deepseek-flash',
+    reasoningEffort: 'high'
+  }
 };
 
 function isPlainObject(value) {
@@ -285,6 +299,18 @@ export function normalizeConfig(raw, options = {}) {
   const profile = readText(dshRaw, 'dsh.profile', 'profile', DEFAULT_CONFIG.dsh.profile, true);
   if (!profile) problems.push('dsh.profile 不能为空');
 
+  const runner = readText(dshRaw, 'dsh.runner', 'runner', DEFAULT_CONFIG.dsh.runner, true);
+  if (DSH_RUNNERS.indexOf(runner) === -1) {
+    problems.push('dsh.runner 必须是 ' + DSH_RUNNERS.join(' / ') + ' 之一，当前为 ' + JSON.stringify(runner));
+  }
+
+  // provider/model 只在 sdk 模式下用，但空值同样是配置错误：sdk 模式会拿它去握手
+  const provider = readText(dshRaw, 'dsh.provider', 'provider', DEFAULT_CONFIG.dsh.provider, true);
+  if (provider === '') problems.push('dsh.provider 不能为空（例如 deepseek-official）');
+  const model = readText(dshRaw, 'dsh.model', 'model', DEFAULT_CONFIG.dsh.model, true);
+  if (model === '') problems.push('dsh.model 不能为空（例如 deepseek-flash）');
+  const reasoningEffort = readText(dshRaw, 'dsh.reasoningEffort', 'reasoningEffort', DEFAULT_CONFIG.dsh.reasoningEffort, true);
+
   let permissionMode = readText(dshRaw, 'dsh.permissionMode', 'permissionMode', DEFAULT_CONFIG.dsh.permissionMode, true);
   if (PERMISSION_MODES.indexOf(permissionMode) === -1) {
     problems.push('dsh.permissionMode 必须是 ' + PERMISSION_MODES.join(' / ') + ' 之一，当前为 ' + JSON.stringify(permissionMode));
@@ -341,7 +367,11 @@ export function normalizeConfig(raw, options = {}) {
       profile,
       cwd: readPath(dshRaw, 'dsh.cwd', 'cwd', ''),
       timeoutMs: readInt(dshRaw, 'dsh.timeoutMs', 'timeoutMs', DEFAULT_CONFIG.dsh.timeoutMs, 1000),
-      permissionMode
+      permissionMode,
+      runner: DSH_RUNNERS.indexOf(runner) === -1 ? DEFAULT_CONFIG.dsh.runner : runner,
+      provider,
+      model,
+      reasoningEffort
     }
   };
 

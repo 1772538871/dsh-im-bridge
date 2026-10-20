@@ -8,7 +8,9 @@ function field(key, label, type, extra = {}) {
     required: extra.required === true,
     secret: SECRET_FIELDS.indexOf(key) !== -1,
     placeholder: typeof extra.placeholder === 'string' ? extra.placeholder : '',
-    help: typeof extra.help === 'string' ? extra.help : ''
+    help: typeof extra.help === 'string' ? extra.help : '',
+    // select 的候选值必须随字段表下发：前端不写死任何字段/选项（契约 §5）
+    options: Array.isArray(extra.options) ? extra.options.slice() : []
   };
 }
 
@@ -36,7 +38,22 @@ const COMMON_FIELDS = [
   field('dsh.binPath', 'DSH 入口路径（留空自动探测）', 'text', { placeholder: 'E:\\Local\\npm\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js' }),
   field('dsh.profile', 'DSH profile 名', 'text', { required: true, placeholder: 'im-bridge' }),
   field('dsh.cwd', 'DSH 工作目录（留空用 <数据目录>/workspace）', 'text'),
-  field('dsh.timeoutMs', '单次 DSH 调用超时（毫秒）', 'number', { placeholder: '300000' })
+  field('dsh.timeoutMs', '单次 DSH 调用超时（毫秒）', 'number', { placeholder: '300000' }),
+  field(
+    'dsh.runner',
+    'DSH 调用方式（headless=每条消息起新进程，稳；sdk=常驻进程，快）',
+    'select',
+    {
+      options: ['headless', 'sdk'],
+      help: 'headless 每条消息约 5.3s；sdk 常驻一条子进程，只有第一轮付冷启动，之后每轮约 1.2s'
+    }
+  ),
+  field('dsh.provider', 'SDK 方式的模型供应商', 'text', { placeholder: 'deepseek-official', help: '仅 sdk 方式生效，headless 忽略' }),
+  field('dsh.model', 'SDK 方式的模型名', 'text', { placeholder: 'deepseek-flash', help: '仅 sdk 方式生效，headless 忽略' }),
+  field('dsh.reasoningEffort', 'SDK 方式的推理强度（留空由模型决定）', 'text', {
+    placeholder: 'high',
+    help: '仅 sdk 方式生效；取值由模型适配器决定，填错会在握手里报错'
+  })
 ];
 
 const PLATFORM_FIELDS = {

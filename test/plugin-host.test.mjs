@@ -247,7 +247,9 @@ test('GET /platforms: 字段表结构合法，secret 标记正确，key 都是�
       assert.equal(typeof platform.description, 'string');
       assert.ok(Array.isArray(platform.fields) && platform.fields.length > 0);
       for (const field of platform.fields) {
-        assert.deepEqual(Object.keys(field).sort(), ['help', 'key', 'label', 'placeholder', 'required', 'secret', 'type']);
+        // options 是 select 的候选值（契约 §5：前端不写死字段表），其余键仍是封闭集合
+        assert.deepEqual(Object.keys(field).filter((key) => key !== 'options').sort(), ['help', 'key', 'label', 'placeholder', 'required', 'secret', 'type']);
+        assert.ok(Array.isArray(field.options), '字段必须带 options 数组（非 select 为空数组）');
         assert.equal(typeof field.label, 'string');
         assert.ok(FIELD_TYPES.includes(field.type), '未知字段类型 ' + field.type);
         assert.equal(typeof field.required, 'boolean');

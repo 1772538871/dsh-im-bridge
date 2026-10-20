@@ -11,12 +11,13 @@ const CORE_MODULES = {
   sessions: '../sessions.mjs',
   pipeline: '../pipeline.mjs',
   dsh: '../dsh.mjs',
+  sdkRunner: '../sdk-runner.mjs',
   onebotClient: '../onebot/client.mjs',
   qqbotAdapter: '../qqbot/adapter.mjs'
 };
 
 const PLATFORM_MODULE = { 'qq-napcat': 'onebotClient', 'qq-official': 'qqbotAdapter' };
-const BASE_MODULES = ['log', 'storage', 'security', 'queue', 'sessions', 'pipeline', 'dsh'];
+const BASE_MODULES = ['log', 'storage', 'security', 'queue', 'sessions', 'pipeline', 'dsh', 'sdkRunner'];
 
 function errorText(error) {
   return error && error.message ? String(error.message) : String(error);
@@ -72,7 +73,7 @@ export function coreConfigOf(config) {
 export function createRuntime({ configStore, logger = null, modules = null, now = () => Date.now() } = {}) {
   if (!configStore || typeof configStore.read !== 'function') throw new Error('createRuntime: 需要 configStore');
 
-  const state = { running: false, since: null, lastError: null, adapter: null, pipeline: null, logger: null };
+  const state = { running: false, since: null, lastError: null, adapter: null, pipeline: null, logger: null, sdkRunner: null };
 
   const diag = (level, message, extra) => {
     const target = state.logger && typeof state.logger[level] === 'function' ? state.logger : logger;
@@ -180,6 +181,18 @@ export function createRuntime({ configStore, logger = null, modules = null, now 
       if (!built.ok) return fail(built.error);
       adapter = built.adapter;
 
+      // dsh.runner 决定每条消息怎么调 DSH：headless 每条起一个进程，sdk 复用常驻子进程。
+      // 默认 headless，切到 sdk 才需要额外握手参数，所以这里只在 sdk 分支建 runner。
+      let runDsh = resolved.modules.dsh.runDsh;
+      if (config.dsh && config.dsh.runner === 'sdk') {
+        const createSdkRunner = resolved.modules.sdkRunner?.createSdkRunner;
+        if (typeof createSdkRunner !== 'function') return fail('SDK runner 尚未就绪');
+        const sdkLogger = typeof runtimeLogger.child === 'function' ? runtimeLogger.child('sdk') : runtimeLogger;
+        // 懒启动：这里只是建对象，真子进程要等第一条消息进来才 spawn
+        state.sdkRunner = createSdkRunner({ config: core, logger: sdkLogger });
+        runDsh = (args = {}) => state.sdkRunner.run({ prompt: args.prompt ?? '', sessionId: args.sessionId ?? null });
+      }
+
       const pipelineLogger = typeof runtimeLogger.child === 'function' ? runtimeLogger.child('pipeline') : runtimeLogger;
       const pipeline = resolved.modules.pipeline.createPipeline({
         config: core,
@@ -190,7 +203,7 @@ export function createRuntime({ configStore, logger = null, modules = null, now 
         serial,
         semaphore,
         sessions,
-        runDsh: resolved.modules.dsh.runDsh,
+        runDsh,
         deps: adapter.deps ?? null
       });
 
@@ -217,6 +230,15 @@ export function createRuntime({ configStore, logger = null, modules = null, now 
       }
       state.adapter = null;
       state.pipeline = null;
+      // 半启动的常驻子进程同样要收：否则它在后台永远占着一条 stdio 通道
+      if (state.sdkRunner && typeof state.sdkRunner.stop === 'function') {
+        try {
+          await state.sdkRunner.stop();
+        } catch {
+          // 启动已经失败，停不下来也不再有别的补救手段
+        }
+      }
+      state.sdkRunner = null;
       state.running = false;
       state.since = null;
       return fail('启动 dsh-bot 运行时失败：' + errorText(error));
@@ -226,8 +248,10 @@ export function createRuntime({ configStore, logger = null, modules = null, now 
   async function stop() {
     const adapter = state.adapter;
     const stopping = state.logger;
+    const sdkRunner = state.sdkRunner;
     state.adapter = null;
     state.pipeline = null;
+    state.sdkRunner = null;
     state.running = false;
     state.since = null;
     if (adapter && typeof adapter.stop === 'function') {
@@ -235,6 +259,14 @@ export function createRuntime({ configStore, logger = null, modules = null, now 
         await adapter.stop();
       } catch (error) {
         diag('warn', '停止平台适配器失败', { error: errorText(error) });
+      }
+    }
+    // 先停适配器再停 sdk 子进程：反过来会让收消息和收进程同时进行，日志里全是干扰
+    if (sdkRunner && typeof sdkRunner.stop === 'function') {
+      try {
+        await sdkRunner.stop();
+      } catch (error) {
+        diag('warn', '停止 SDK 子进程失败', { error: errorText(error) });
       }
     }
     if (stopping) {
