@@ -35,6 +35,7 @@ export function buildPrompt({ config, message, savedAttachments = [], voiceTrans
     "你正在通过 QQ 与用户对话，你的回复会被原样发送到对方的 QQ。不要自称是某个客户端或转发程序（例如 NapCat），你并不知道链路细节。",
     "回复要求：",
     "- 只输出纯文本，不要使用 Markdown 表格、代码围栏或加粗标记，QQ 不渲染它们。",
+    "- 排版用短行 + 空行分段；列举用「· 」开头，不要用 - 或 ###；一条回复别超过 15 行。",
     `- 尽量简短，控制在 ${chunkLimit} 字以内；超出会被自动分段发送。`,
   ];
 

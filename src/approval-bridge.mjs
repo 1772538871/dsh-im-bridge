@@ -52,10 +52,12 @@ function reasonTextOf(req) {
 
 function askTextOf(entry, req, timeoutMs) {
   const minutes = Math.max(1, Math.round(timeoutMs / 60000));
-  const lines = ["【审批 " + entry.label + "】DSH 想使用工具：" + entry.toolName];
+  // QQ 里一行太长会挤成一段，所以拆成"标题 + 要点 + 怎么回"三段
+  const lines = ["【审批 " + entry.label + "】需要你确认"];
+  lines.push("· 操作：" + entry.toolName);
   const reason = reasonTextOf(req);
-  if (reason !== "") lines.push("原因：" + reason);
-  lines.push("回复 1 放行一次 / 2 拒绝 / 0 取消；" + minutes + " 分钟内有效，超时按拒绝处理。");
+  if (reason !== "") lines.push("· 原因：" + reason);
+  lines.push("回复 1 允许 / 2 拒绝 / 0 取消（" + minutes + " 分钟内有效，超时按拒绝处理）");
   return lines.join("\n");
 }
 

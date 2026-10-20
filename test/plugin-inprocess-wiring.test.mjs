@@ -253,7 +253,7 @@ test("接线：审批请求转到 QQ，回 1 放行；这条回复不会再被�
     assert.equal(approvalTexts.length, 1, JSON.stringify(onebot.client.texts()));
     assert.match(approvalTexts[0], /bash/);
     assert.match(approvalTexts[0], /需要写到工作区之外/);
-    assert.match(approvalTexts[0], /回复 1 放行一次/);
+    assert.match(approvalTexts[0], /回复 1 允许/);
 
     // 用户回一个 "1"：包装层必须先把它当审批答复，不能派给 pipeline
     onebot.client.onEvent(oneBotMessage("1"));

@@ -1,4 +1,5 @@
 import { transcribe as defaultTranscribe } from "./asr.mjs";
+import { formatForQq } from './format.mjs';
 import { buildPrompt } from "./prompt.mjs";
 
 const DEFAULT_ERROR_PREFIX = "[bridge] ";
@@ -128,6 +129,8 @@ export function createPipeline({
   };
 
   async function deliver(message, text) {
+  // 交给 QQ 之前统一压成纯文本版式（模型经常输出 markdown，QQ 不渲染）
+  text = formatForQq(text);
     try {
       const resolved = await resolveDeps();
       return await resolved.sendReply({ client, message, text, config, logger });
