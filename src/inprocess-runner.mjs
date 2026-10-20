@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
 import { textOfMessage } from "./sdk-runner.mjs";
 
 const DEFAULT_TIMEOUT_MS = 300000;
@@ -21,10 +23,30 @@ function delay(ms) {
  * 代价是它依赖 DSH 内部服务名（agents / agentDefaultModel / approval / sessions），
  * 所以缺服务时只报 not_configured，绝不抛。
  */
+/**
+ * 尽力拿到 DSH 内部的 installModelSelection：GUI 建会话时（session-controller）会先装模型选择
+ * 再挂预设，缺了这一步，模型请求里可能只剩"延迟加载"的工具，服务端会直接拒
+ * （"at least one tool must have defer_loading=false"）。拿不到就跳过，不影响其余功能。
+ */
+async function loadModelSelectionInstaller(logger) {
+  try {
+    const anchor = process.argv[1];
+    if (typeof anchor !== "string" || anchor === "") return null;
+    const requireFromCli = createRequire(anchor);
+    const mod = await import(pathToFileURL(requireFromCli.resolve("@deepseek-ai/dsh-agent")).href);
+    return typeof mod.installModelSelection === "function" ? mod.installModelSelection : null;
+  } catch (error) {
+    try { logger?.warn?.("拿不到 installModelSelection（不影响启动，但工具集可能不完整）", { error: String(error?.message ?? error).slice(0, 200) }); } catch {}
+    return null;
+  }
+}
+
 export function createInProcessRunner({ ctx = null, config = null, logger = null, bridge = null, now = () => Date.now() } = {}) {
   const dsh = config?.dsh ?? {};
   // sessionId -> { agent, dispose, chatKey, ... }：同一个会话复用同一个 handle，天然续接上下文
   const handles = new Map();
+  let selectionInstallerPromise = null;
+  const installerOf = () => (selectionInstallerPromise ??= loadModelSelectionInstaller(logger));
   const state = { busy: false, lastError: null, created: 0, runs: 0, policyWarned: false };
   let chain = Promise.resolve();
   let sessionSeq = 0;
@@ -129,6 +151,17 @@ export function createInProcessRunner({ ctx = null, config = null, logger = null
       agentOptions,
       // setup 只做组合、不驱动 agent：真正的驱动在 runTurn 里
       setup: async (agentCtx) => {
+        // 与 web session-controller 同样的顺序：先装模型选择，再挂预设。
+        // 缺前一步时，模型请求里可能只剩延迟加载的工具，服务端会以
+        // "at least one tool must have defer_loading=false" 拒绝。
+        const installer = await installerOf();
+        if (installer !== null) {
+          try {
+            installer(agentCtx, { current: agentOptions, assembled: undefined });
+          } catch (error) {
+            diag("warn", "安装模型选择失败", { error: errorText(error) });
+          }
+        }
         if (presetId !== "" && presets && typeof presets.mount === "function") {
           await presets.mount(agentCtx, presetId);
         }
