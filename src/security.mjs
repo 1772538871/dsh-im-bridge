@@ -41,8 +41,20 @@ export function createGuard(options) {
     }
   };
 
+  // 官方机器人事件里没有 QQ 号，只有 openid；被拦下时把它打出来，用户才能把它加进白名单
+  let currentUserId = '';
+
+  const notice = (message) => {
+    try {
+      if (logger && typeof logger.info === 'function') logger.info(message);
+    } catch {
+      // 记不下来也不能影响判定
+    }
+  };
+
   const deny = (reason) => {
     debug('消息被拦截：' + reason);
+    if (reason === 'user_not_allowed') notice('发送者不在白名单，已忽略：userId=' + currentUserId + '（把这个值加进 security.userWhitelist 才会放行）');
     return { allow: false, reason };
   };
 
@@ -52,6 +64,7 @@ export function createGuard(options) {
       const m = msg || {};
       const chatType = m.chatType === 'group' ? 'group' : (m.chatType === 'private' ? 'private' : m.chatType);
       const userId = m.userId === undefined || m.userId === null ? '' : String(m.userId);
+      currentUserId = userId;
       const groupId = m.groupId === undefined || m.groupId === null ? '' : String(m.groupId);
 
       // 判定顺序即优先级，reason 是 pipeline 的日志短码，不得改动字面量

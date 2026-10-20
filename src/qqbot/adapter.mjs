@@ -13,13 +13,15 @@ export const DEFAULT_API_BASE = 'https://api.bot.qq.com';
  * 校验与运行共用这一份解析结果，避免 --check 通过而启动失败。
  */
 export function resolveQqBotConfig(config = {}, env = {}) {
-  const raw = config?.qqbot ?? {};
+  // 未上线机器人只在沙箱环境建会话（正式网关实测 close 4903 create session error），所以 sandbox 开关必须落到 apiBase 上
+const SANDBOX_API_BASE = 'https://sandbox.api.sgroup.qq.com';
+const raw = config?.qqbot ?? {};
   const appId = String(raw.appId ?? '').trim() || String(env.QQBOT_APP_ID ?? '').trim();
   const clientSecret = String(raw.clientSecret ?? '').trim() || String(env.QQBOT_CLIENT_SECRET ?? '').trim();
   return {
     appId,
     clientSecret,
-    apiBase: String(raw.apiBase || DEFAULT_API_BASE).replace(/\/+$/, ''),
+    apiBase: String(raw.apiBase || (raw.sandbox === true ? SANDBOX_API_BASE : DEFAULT_API_BASE)).replace(/\/+$/, ''),
     intents: Number.isFinite(Number(raw.intents)) ? Math.floor(Number(raw.intents)) : INTENTS_GROUP_AND_C2C,
     shard: Array.isArray(raw.shard) && raw.shard.length === 2 ? raw.shard : [0, 1],
     reconnectMinMs: raw.reconnectMinMs,
