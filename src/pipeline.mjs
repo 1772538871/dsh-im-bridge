@@ -269,7 +269,10 @@ export function createPipeline({
 
       await serial.run(chatKey, async () => {
         // 会话 id 必须在串行体内读：排在后面的消息要用前一条刚落盘的新 id
-        const sessionId = await readSession(chatKey);
+        // 每条消息都开新会话：不读也不写映射表。好处是永远不撞"写句柄被占用"，
+        // 代价是跨消息没有上下文（用户明确要这个行为时才开）
+        const freshEveryTime = config?.dsh?.newSessionPerMessage === true;
+        const sessionId = freshEveryTime ? null : await readSession(chatKey);
         const prompt = buildPrompt({ config, message, savedAttachments: saved, voiceTranscript });
 
         // 长任务最怕"静默"：先回一条回执，超过阈值再报进度（用主动消息，不占被动回复配额）
@@ -306,7 +309,7 @@ export function createPipeline({
         }
 
         if (result?.ok) {
-          if (result.sessionId && result.sessionId !== sessionId) {
+          if (!freshEveryTime && result.sessionId && result.sessionId !== sessionId) {
             try {
               await sessions?.set?.(chatKey, result.sessionId);
             } catch (error) {

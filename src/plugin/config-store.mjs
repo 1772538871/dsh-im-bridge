@@ -49,6 +49,7 @@ export const DEFAULT_CONFIG = {
     cwd: '',
     // 开启后每轮结束释放会话写句柄，网页才能点开这条会话看到历史
     releaseOnIdle: false,
+    newSessionPerMessage: false,
     timeoutMs: 300000,
     permissionMode: 'workspace-write',
     // 默认保持 headless：不动现有行为，用户显式切到 sdk 才走常驻进程
