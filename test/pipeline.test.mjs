@@ -212,7 +212,7 @@ test("buildPrompt：纯文本 + 附件路径 + 语音转写都写进去", () => 
     savedAttachments: [{ kind: "image", filename: "a.png", path: "C:/bridge/media/a.png" }],
     voiceTranscript: "这是语音转写内容",
   });
-  assert.match(prompt, /QQ 机器人/);
+  assert.match(prompt, /通过 QQ 与用户对话/);
   assert.match(prompt, /纯文本/);
   assert.match(prompt, /1500 字以内/);
   assert.match(prompt, /图片（a\.png）：C:\/bridge\/media\/a\.png/);
