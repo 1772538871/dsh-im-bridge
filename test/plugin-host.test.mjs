@@ -26,7 +26,7 @@ import {
   resolveLogFile
 } from '../src/plugin/config-store.mjs';
 import { createPlatformAdapter, listPlatforms } from '../src/plugin/platforms.mjs';
-import { createRuntime, coreConfigOf } from '../src/plugin/runtime.mjs';
+import { TEST_MESSAGE_TEXT, createRuntime, coreConfigOf, resolveTestTarget } from '../src/plugin/runtime.mjs';
 import { apply, inject, name as pluginName } from '../lib/host.js';
 import { createSerialQueue, createSemaphore } from '../src/queue.mjs';
 
@@ -248,7 +248,17 @@ test('GET /platforms: 字段表结构合法，secret 标记正确，key 都是�
       assert.ok(Array.isArray(platform.fields) && platform.fields.length > 0);
       for (const field of platform.fields) {
         // options 是 select 的候选值（契约 §5：前端不写死字段表），其余键仍是封闭集合
-        assert.deepEqual(Object.keys(field).filter((key) => key !== 'options').sort(), ['help', 'key', 'label', 'placeholder', 'required', 'secret', 'type']);
+        assert.deepEqual(Object.keys(field).filter((key) => key !== 'options').sort(), [
+          'group',
+          'help',
+          'key',
+          'label',
+          'placeholder',
+          'required',
+          'secret',
+          'type'
+        ]);
+        assert.ok(['basic', 'advanced'].indexOf(field.group) !== -1, '未知分组：' + field.group + '（' + field.key + '）');
         assert.ok(Array.isArray(field.options), '字段必须带 options 数组（非 select 为空数组）');
         assert.equal(typeof field.label, 'string');
         assert.ok(FIELD_TYPES.includes(field.type), '未知字段类型 ' + field.type);
@@ -270,6 +280,128 @@ test('GET /platforms: 字段表结构合法，secret 标记正确，key 都是�
     assert.equal(route.path, '/dsh-bot/api');
     assert.equal(API_PREFIX, '/dsh-bot/api');
     assert.equal(typeof route.handler, 'function');
+  });
+});
+
+// ---------------------------------------------------------------- 字段分组
+
+test('字段分组: basic 只放"新手必须看懂的那几项"，其余全进 advanced', () => {
+  const BASIC = {
+    'qq-napcat': ['enabled', 'storage.rootDir', 'security.userWhitelist', 'testTarget', 'dsh.binPath', 'dsh.profile', 'qqNapcat.wsUrl', 'qqNapcat.accessToken'],
+    'qq-official': ['enabled', 'storage.rootDir', 'security.userWhitelist', 'testTarget', 'dsh.binPath', 'dsh.profile', 'qqOfficial.appId', 'qqOfficial.appSecret']
+  };
+  for (const platform of listPlatforms()) {
+    const basic = platform.fields.filter((field) => field.group === 'basic').map((field) => field.key);
+    // 首屏放太多等于没分组：上限 10，超了说明有人往 basic 里乱塞
+    assert.ok(basic.length > 0 && basic.length <= 10, platform.id + ' basic 组数量异常：' + basic.length);
+    assert.ok(platform.fields.some((field) => field.group === 'advanced'), platform.id + ' 没有 advanced 组，折叠区就是空的');
+    if (BASIC[platform.id]) assert.deepEqual(basic.slice().sort(), BASIC[platform.id].slice().sort(), platform.id + ' basic 组变了');
+    // 平台专属必填项必须落在 basic：新手第一眼就要填它们
+    for (const field of platform.fields) {
+      if (/^(qqOfficial\.appId|qqOfficial\.appSecret|qqNapcat\.wsUrl|qqNapcat\.accessToken)$/.test(field.key)) {
+        assert.equal(field.group, 'basic', field.key + ' 必须在 basic 组');
+      }
+    }
+  }
+  const napcat = listPlatforms().find((p) => p.id === 'qq-napcat');
+  const byKey = new Map(napcat.fields.map((field) => [field.key, field]));
+  // 调参用的字段一个都不能留在首屏
+  for (const key of ['storage.maxFileBytes', 'security.rateLimitPerMinute', 'security.maxConcurrentRuns', 'security.maxPromptChars', 'reply.maxChunkChars', 'asr.args', 'log.level', 'dsh.runner', 'approval.scope']) {
+    assert.equal(byKey.get(key).group, 'advanced', key + ' 应该收进高级设置');
+  }
+  assert.ok(byKey.has('testTarget'), '缺 testTarget 字段');
+});
+
+test('resolveTestTarget: 显式 target > 配置 testTarget > 按平台从白名单猜', () => {
+  const config = { platform: 'qq-napcat', testTarget: '', security: { userWhitelist: ['abc', '1772538871'] } };
+  assert.deepEqual(resolveTestTarget(config, ' 42 '), { ok: true, target: '42', source: 'explicit' });
+  assert.deepEqual(resolveTestTarget({ ...config, testTarget: '9527' }, ''), { ok: true, target: '9527', source: 'config' });
+  assert.deepEqual(resolveTestTarget(config, ''), { ok: true, target: '1772538871', source: 'whitelist' });
+  // 官方机器人只有 openid（≥20 位十六进制），QQ 号在那里不成立
+  const official = { platform: 'qq-official', testTarget: '', security: { userWhitelist: ['1772538871', '0123456789abcdef0123456789abcdef'] } };
+  assert.deepEqual(resolveTestTarget(official, ''), { ok: true, target: '0123456789abcdef0123456789abcdef', source: 'whitelist' });
+  const none = resolveTestTarget({ platform: 'qq-napcat', testTarget: '', security: { userWhitelist: ['abc'] } }, '');
+  assert.equal(none.ok, false);
+  assert.match(none.error, /测试消息发给谁/);
+});
+
+// ---------------------------------------------------------------- POST /test-send
+
+test('POST /test-send: 没启动时 ok:false + 人话，不抛也不发', async () => {
+  await withDir(async (dir) => {
+    const store = makeStore(dir);
+    await store.save(withWhitelist(configFor(join(dir, 'data'))));
+    const sent = [];
+    const { modules } = fakeModules({ onebotSend: { sendReply: async (args) => { sent.push(args); return { sent: 1, failed: 0 }; } } });
+    const handler = createApiHandler({ configStore: store, runtime: createRuntime({ configStore: store, modules }) });
+
+    const { json } = await request(handler, postJson('/test-send', {}));
+    assert.equal(json.ok, false);
+    assert.match(json.error, /还没启动/);
+    assert.equal(sent.length, 0, '没启动就不能真发');
+  });
+});
+
+test('POST /test-send: 启动后发一句测试消息，返回 target 与 chunkCount', async () => {
+  await withDir(async (dir) => {
+    const store = makeStore(dir);
+    await store.save(withWhitelist(configFor(join(dir, 'data'))));
+    const sent = [];
+    const { modules } = fakeModules({
+      onebotSend: {
+        sendReply: async (args) => {
+          sent.push(args);
+          return { sent: 2, failed: 0 };
+        }
+      }
+    });
+    const runtime = createRuntime({ configStore: store, modules });
+    const handler = createApiHandler({ configStore: store, runtime });
+    await request(handler, postJson('/control', { action: 'start' }));
+
+    const auto = await request(handler, postJson('/test-send', {}));
+    assert.equal(auto.json.ok, true, JSON.stringify(auto.json));
+    assert.equal(auto.json.target, '1001', '没给 target 时按平台从白名单里猜一个 QQ 号');
+    assert.equal(auto.json.chunkCount, 2);
+    assert.equal(sent.length, 1);
+    // 私聊 + 固定文案：群聊要 @ 才送达，测试消息不该逼用户先建群
+    assert.deepEqual(sent[0].message, { chatType: 'private', userId: '1001' });
+    assert.equal(sent[0].text, TEST_MESSAGE_TEXT);
+
+    const explicit = await request(handler, postJson('/test-send', { target: ' 1002 ' }));
+    assert.equal(explicit.json.ok, true);
+    assert.equal(explicit.json.target, '1002');
+    assert.equal(sent[1].message.userId, '1002');
+
+    await request(handler, postJson('/control', { action: 'stop' }));
+  });
+});
+
+test('POST /test-send: 白名单里没有能用的号时 ok:false，并说清该改哪', async () => {
+  await withDir(async (dir) => {
+    const store = makeStore(dir);
+    // 白名单非空才能启动，但里面没有一个纯数字（NapCat 只认 QQ 号）
+    await store.save(configFor(join(dir, 'data'), { security: { ...defaultConfig().security, userWhitelist: ['not-a-number'] } }));
+    const sent = [];
+    const { modules } = fakeModules({ onebotSend: { sendReply: async (args) => { sent.push(args); return { sent: 1, failed: 0 }; } } });
+    const runtime = createRuntime({ configStore: store, modules });
+    const handler = createApiHandler({ configStore: store, runtime });
+    const started = await request(handler, postJson('/control', { action: 'start' }));
+    assert.equal(started.json.ok, true);
+
+    const { json } = await request(handler, postJson('/test-send', {}));
+    assert.equal(json.ok, false);
+    assert.match(json.error, /测试消息发给谁/);
+    assert.equal(sent.length, 0);
+
+    // 发不出去时也不能假装成功：明确报 ok:false
+    const failing = fakeModules({ onebotSend: { sendReply: async () => ({ sent: 0, failed: 1 }) } });
+    const runtime2 = createRuntime({ configStore: store, modules: failing.modules });
+    const handler2 = createApiHandler({ configStore: store, runtime: runtime2 });
+    await request(handler2, postJson('/control', { action: 'start' }));
+    const failed = await request(handler2, postJson('/test-send', { target: '1003' }));
+    assert.equal(failed.json.ok, false);
+    assert.match(failed.json.error, /发不出去/);
   });
 });
 

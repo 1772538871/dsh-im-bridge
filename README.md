@@ -57,6 +57,39 @@ dsh web
 
 ---
 
+## 给朋友装（3 分钟）
+
+先替对方确认三件事，缺一件都装不成：
+
+1. **Node.js ≥ 20** —— 终端敲 `node -v` 要能看到 `v20` 或更高（没有就去 [nodejs.org](https://nodejs.org/) 装 LTS）；
+2. **DSH** —— `npm i -g @deepseek-ai/dsh`，或者用他已经装好的那份；
+3. **一个 QQ 机器人，并且他自己的 QQ 号被加进了这个机器人的「开发体验用户」** —— 这步只能在 QQ 开放平台后台做，别人替不了他（没加的话，他发消息机器人永远收不到）。
+
+然后这 5 条，一条一条敲：
+
+```powershell
+git clone https://github.com/1772538871/dsh-im-bridge.git   # 1) 取代码
+cd dsh-im-bridge                                            # 2) 进目录
+dsh plugin --profile web add .                              # 3) 装进 DSH
+dsh web                                                     # 4) 重启 DSH（插件只在启动时装配）
+# 5) 浏览器开 http://127.0.0.1:3080 → 左下角 设置 → 侧栏 dsh bot
+```
+
+在那一页里只剩 5 件事：选「QQ 官方机器人」→ 填 AppID / AppSecret → 「谁能用」里填他自己的 QQ 号 → **保存** → **启动**。
+想要一句"到底通了没"：点 **「发送测试消息」**，QQ 收到「【测试】dsh bot 已连通…」就是通了。其余设置都收在「高级设置（一般不用改）」里，不用管。
+
+卡住看哪份：
+
+| 卡在哪 | 看这里 |
+| --- | --- |
+| 不知道哪些格子必须填 | [docs/manual.zh.md](docs/manual.zh.md) 的「第一次开机：8 步」 |
+| 装不进 DSH / 设置页没有 dsh bot | [docs/install.md](docs/install.md) |
+| 状态行「运行中」但发消息没反应 | [docs/troubleshooting.md](docs/troubleshooting.md) |
+| 日志里一堆 4013 / 4914 之类的错误码 | [docs/manual.zh.md](docs/manual.zh.md) 的「它不听话时」 |
+| 不想用官方机器人，想接自己挂的 QQ | [docs/NAPCAT.md](docs/NAPCAT.md) |
+
+---
+
 ## 界面预览
 
 装好之后，DSH 的设置侧栏会多出「dsh bot」这一页：

@@ -77,6 +77,36 @@ async function resolveModules(names, injected) {
   return { modules, missing };
 }
 
+export const TEST_MESSAGE_TEXT = '【测试】dsh bot 已连通，这是一条来自你电脑的消息。';
+
+// 官方机器人拿不到 QQ 号，只有 openid——一串 ≥20 位的小写十六进制
+const OPENID_LIKE = /^[0-9a-f]{20,}$/i;
+
+/**
+ * 测试消息发给谁：显式 target > 配置 testTarget > 按平台从白名单里猜。
+ * 猜是刻意的：新手填完白名单只想点一下"看看通不通"，不该被迫先搞懂
+ * 官方机器人只有 openid、NapCat 只有 QQ 号这件事。
+ */
+export function resolveTestTarget(config, explicit = '') {
+  const wanted = typeof explicit === 'string' ? explicit.trim() : '';
+  if (wanted !== '') return { ok: true, target: wanted, source: 'explicit' };
+  const configured = typeof config?.testTarget === 'string' ? config.testTarget.trim() : '';
+  if (configured !== '') return { ok: true, target: configured, source: 'config' };
+  const list = Array.isArray(config?.security?.userWhitelist) ? config.security.userWhitelist : [];
+  const candidates = list.map((item) => (typeof item === 'string' ? item.trim() : '')).filter((item) => item !== '');
+  let pick;
+  if (config?.platform === 'qq-official') {
+    pick = candidates.filter((item) => OPENID_LIKE.test(item))[0];
+  } else if (config?.platform === 'qq-napcat') {
+    pick = candidates.filter((item) => /^\d+$/.test(item))[0];
+  }
+  if (pick) return { ok: true, target: pick, source: 'whitelist' };
+  return {
+    ok: false,
+    error: '不知道该把测试消息发给谁：在「测试消息发给谁」里填一个号，或者先把你自己加进用户白名单。'
+  };
+}
+
 /** 插件配置 -> 内核配置：内核只认 onebot/qqbot 段，插件侧字段名是 qqNapcat/qqOfficial。 */
 export function coreConfigOf(config) {
   const napcat = config?.qqNapcat ?? {};
@@ -488,5 +518,66 @@ export function createRuntime({ configStore, logger = null, modules = null, now 
     return start();
   }
 
-  return { start, stop, restart, status, isRunning: () => state.running === true };
+  /**
+   * 「发送测试消息」：借已经启动的适配器发一句话，证明"配置 -> 连接 -> 送达"整条路是通的。
+   * 全程返回 {ok:false, error} 而不抛：设置页要的是一句人话，不是堆栈。
+   */
+  async function sendTest(target = '') {
+    const adapter = state.adapter;
+    if (state.running !== true || !adapter) {
+      return { ok: false, error: '机器人还没启动：先点「启动」，状态行显示「运行中」再发测试消息。' };
+    }
+
+    let config = {};
+    try {
+      config = configStore.read().config ?? {};
+    } catch (error) {
+      return { ok: false, error: '读不到配置：' + errorText(error) };
+    }
+
+    const resolved = resolveTestTarget(config, target);
+    if (resolved.ok !== true) return { ok: false, error: resolved.error };
+
+    const core = coreConfigOf(config);
+    // QQ 官方适配器自带 deps.sendReply；OneBot 的 deps 由 pipeline 自己按需装配（adapter.deps 是 null），
+    // 测试消息没有 pipeline 可用，只能在这里按同一份模块表补齐——否则默认平台反而测不了。
+    let sendReply = typeof adapter.deps?.sendReply === 'function' ? adapter.deps.sendReply : null;
+    if (!sendReply) {
+      const extra = await resolveModules(['onebotSend'], modules);
+      const injected = extra.modules.onebotSend?.sendReply;
+      sendReply = typeof injected === 'function' ? injected : null;
+    }
+    if (!sendReply) {
+      return { ok: false, error: '这个平台还不支持测试消息：适配器没有提供发送能力。' };
+    }
+
+    let result;
+    try {
+      // 私聊发：群聊必须 @ 才送达，测试消息不该逼用户先建一个群
+      result = await sendReply({
+        client: adapter.client,
+        message: { chatType: 'private', userId: resolved.target },
+        text: TEST_MESSAGE_TEXT,
+        config: core,
+        logger: state.logger
+      });
+    } catch (error) {
+      return { ok: false, error: '发送测试消息失败：' + errorText(error) };
+    }
+
+    const sent = Number(result?.sent) || 0;
+    const failed = Number(result?.failed) || 0;
+    if (sent <= 0) {
+      return {
+        ok: false,
+        error:
+          '发不出去（目标 ' + resolved.target + '）：机器人可能没连上平台，或这个号收不了消息。' +
+          '看一眼状态行的「最近错误」和今天的日志。'
+      };
+    }
+    // chunkCount 把失败的分段也算进去：用户关心的是"我这条测试到底被拆成几段发过"
+    return { ok: true, target: resolved.target, chunkCount: sent + failed };
+  }
+
+  return { start, stop, restart, status, sendTest, isRunning: () => state.running === true };
 }

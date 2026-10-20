@@ -17,6 +17,9 @@ const LOG_LEVELS = ['debug', 'info', 'warn', 'error'];
 export const DEFAULT_CONFIG = {
   enabled: false,
   platform: 'qq-napcat',
+  // 「发送测试消息」的收件人。留空不是"发不出去"，而是让运行时按平台从白名单里猜一个，
+  // 这样新手不必为了点一下测试按钮多填一项。
+  testTarget: '',
   storage: { rootDir: 'E:\\dsh-im-bridge-data', maxFileBytes: 104857600, retentionDays: 30 },
   security: {
     userWhitelist: [],
@@ -329,6 +332,7 @@ export function normalizeConfig(raw, options = {}) {
   const config = {
     enabled: readBool(src, 'enabled', 'enabled', DEFAULT_CONFIG.enabled),
     platform: PLATFORM_IDS.indexOf(platform) === -1 ? DEFAULT_CONFIG.platform : platform,
+    testTarget: readText(src, 'testTarget', 'testTarget', DEFAULT_CONFIG.testTarget, true),
     storage: {
       rootDir,
       maxFileBytes: readInt(storageRaw, 'storage.maxFileBytes', 'maxFileBytes', DEFAULT_CONFIG.storage.maxFileBytes, 1),

@@ -132,6 +132,29 @@ export function createApiHandler({ configStore, runtime, logger = null, now = ()
     return sendJson(res, { ok: false, error: (result && result.error) || action + ' 失败' });
   }
 
+  // 设置页的「发送测试消息」：结果一律 HTTP 200 + {ok}，前端只按 ok 分支（契约 §3）
+  async function postTestSend(req, res) {
+    const type = String(req?.headers?.['content-type'] ?? '').toLowerCase();
+    if (!type.includes('application/json')) {
+      return sendJson(res, { ok: false, error: 'content-type 必须是 application/json' });
+    }
+    const body = await readJson(req);
+    if (!body.ok) return sendJson(res, { ok: false, error: body.error });
+    const value = body.value && typeof body.value === 'object' ? body.value : {};
+    const target = value.target;
+    if (target !== undefined && target !== null && typeof target !== 'string') {
+      return sendJson(res, { ok: false, error: 'target 必须是字符串（要发给谁），或干脆不传' });
+    }
+    if (typeof runtime.sendTest !== 'function') {
+      return sendJson(res, { ok: false, error: '当前宿主版本不支持发送测试消息' });
+    }
+    const result = await runtime.sendTest(target ?? '');
+    if (result && result.ok) {
+      return sendJson(res, { ok: true, target: result.target, chunkCount: result.chunkCount });
+    }
+    return sendJson(res, { ok: false, error: (result && result.error) || '发送测试消息失败' });
+  }
+
   async function getLogsTail(url, res) {
     const view = configStore.read();
     const target = resolveLogFile(view.config, { file: url.searchParams.get('file') ?? '', now: now() });
@@ -179,6 +202,10 @@ export function createApiHandler({ configStore, runtime, logger = null, now = ()
     if (suffix === '/platforms') {
       if (method !== 'GET') return sendJson(res, { ok: false, error: '只接受 GET /platforms' });
       return sendJson(res, { ok: true, platforms: listPlatforms() });
+    }
+    if (suffix === '/test-send') {
+      if (method !== 'POST') return sendJson(res, { ok: false, error: '只接受 POST /test-send' });
+      return postTestSend(req, res);
     }
     if (suffix === '/logs/tail') {
       if (method !== 'GET') return sendJson(res, { ok: false, error: '只接受 GET /logs/tail' });

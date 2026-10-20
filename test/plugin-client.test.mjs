@@ -499,18 +499,58 @@ test('switchPlatformForm 保留公共字段的已改输入，换上新平台的�
   assert.ok(!next.fields.some((f) => f.key === 'qqNapcat.wsUrl'));
 });
 
-test('groupFields 按点路径首段分组，顶格字段归到通用组', () => {
+test('groupFields 只分 basic / advanced 两组，basic 在前', () => {
   const { exports } = loadClient();
-  const fields = exports.normalizePlatforms(PLATFORMS)[0].fields;
-  const groups = exports.groupFields([
-    { key: 'enabled', type: 'boolean' },
-    { key: 'storage.rootDir', type: 'text' },
-    { key: 'storage.maxFileBytes', type: 'number' },
-    { key: 'qqNapcat.wsUrl', type: 'text' },
-    { key: 'security.userWhitelist', type: 'stringList', group: '白名单' }
+  const fields = exports.groupFields([
+    { key: 'storage.maxFileBytes', type: 'number', group: 'advanced' },
+    { key: 'enabled', type: 'boolean', group: 'basic' },
+    { key: 'storage.rootDir', type: 'text', group: 'basic' },
+    { key: 'log.level', type: 'select', group: 'advanced' }
   ]);
-  assert.deepEqual(Array.from(groups, (g) => g.title), ['通用', 'storage', 'qqNapcat', '白名单']);
-  assert.equal(groups[1].fields.length, 2);
+  assert.deepEqual(Array.from(fields, (g) => g.group), ['basic', 'advanced']);
+  assert.deepEqual(Array.from(fields[0].fields, (f) => f.key), ['enabled', 'storage.rootDir']);
+  assert.deepEqual(Array.from(fields[1].fields, (f) => f.key), ['storage.maxFileBytes', 'log.level']);
+  assert.equal(fields[0].title, '常用设置');
+  assert.match(fields[1].title, /高级设置/);
+  // 空组不能留下一个空标题
+  assert.deepEqual(Array.from(exports.groupFields([{ key: 'a', group: 'basic' }]), (g) => g.group), ['basic']);
+  assert.deepEqual(Array.from(exports.groupFields([])), []);
+});
+
+test('老版本 host 不下发 group 时整体当 basic 渲染，不把整页塞进折叠区', () => {
+  const { exports } = loadClient();
+  const normalized = exports.normalizePlatforms(PLATFORMS)[0].fields;
+  assert.ok(normalized.every((field) => field.group === 'advanced'), '缺省值是 advanced（新字段默认不进首屏）');
+  assert.deepEqual(Array.from(exports.groupFields(normalized), (g) => g.group), ['basic']);
+  // 非法分组名同样落到 advanced，而不是丢字段
+  assert.equal(exports.normalizeField({ key: 'x', group: '白名单' }).group, 'advanced');
+  assert.equal(exports.normalizeField({ key: 'x', group: 'BASIC' }).group, 'basic');
+});
+
+test('buildTestSendPayload 留空不传 target，填了就 trim 后带上', () => {
+  const { exports } = loadClient();
+  // 跨 realm 的对象比较不了原型，只看 key
+  assert.deepEqual(Object.keys(exports.buildTestSendPayload('')), []);
+  assert.deepEqual(Object.keys(exports.buildTestSendPayload('   ')), []);
+  assert.deepEqual(Object.keys(exports.buildTestSendPayload(undefined)), []);
+  const filled = exports.buildTestSendPayload(' 1772538871 ');
+  assert.deepEqual(Object.keys(filled), ['target']);
+  assert.equal(filled.target, '1772538871');
+});
+
+test('describeTestResult 成功说清发给谁，失败给出人话原因', () => {
+  const { exports } = loadClient();
+  const ok = exports.describeTestResult({ ok: true, target: '1772538871', chunkCount: 1 });
+  assert.equal(ok.kind, 'ok');
+  assert.ok(ok.text.includes('已发送给 1772538871'), ok.text);
+  assert.ok(!ok.text.includes('分 '), ok.text);
+  const chunked = exports.describeTestResult({ ok: true, target: 'abc', chunkCount: 3 });
+  assert.ok(chunked.text.includes('分 3 条'), chunked.text);
+  const failed = exports.describeTestResult({ ok: false, error: '机器人还没启动：先点「启动」' });
+  assert.equal(failed.kind, 'error');
+  assert.ok(failed.text.includes('没发出去'), failed.text);
+  assert.ok(failed.text.includes('先点「启动」'), failed.text);
+  assert.equal(exports.describeTestResult(null).kind, 'error');
 });
 
 test('snapshotFrom 选用配置里的平台，非法值退回第一个平台', () => {
@@ -736,5 +776,43 @@ test('交互：网络全挂时页面是一行提示，不是白屏', async () =>
   const text = textOf(element);
   assert.ok(text.includes('连不上 dsh-im-bridge 服务'), text);
   assert.ok(text.includes('ECONNREFUSED'), text);
+});
+
+test('交互：点「发送测试消息」→ POST /test-send，成功显示发给谁', async () => {
+  let lastTest = null;
+  const fetchImpl = async (url, init) => {
+    if (url === '/dsh-bot/api/platforms') return jsonResponse({ ok: true, platforms: PLATFORMS });
+    if (url === '/dsh-bot/api/config') return jsonResponse({ ok: true, config: CONFIG, warnings: [], configPath: 'p' });
+    if (url === '/dsh-bot/api/test-send') {
+      lastTest = JSON.parse((init && init.body) || '{}');
+      return jsonResponse({ ok: true, target: '10001', chunkCount: 1 });
+    }
+    return jsonResponse({ ok: true, running: true, enabled: true, platform: 'qq-napcat', stats: {} });
+  };
+  const { render, fake } = mountSection(fetchImpl);
+  let element = await settle(fake, render);
+  findAll(element, (n) => n.type === 'button' && textOf(n) === '发送测试消息')[0].props.onClick();
+  await tick();
+  element = render();
+  assert.ok(textOf(element).includes('已发送给 10001'), textOf(element));
+  assert.deepEqual(lastTest, {}, '没填「测试消息发给谁」就不传 target，让宿主按平台自己挑');
+});
+
+test('交互：测试消息发不出去时显示人话原因，不说"已发送"', async () => {
+  const fetchImpl = async (url) => {
+    if (url === '/dsh-bot/api/platforms') return jsonResponse({ ok: true, platforms: PLATFORMS });
+    if (url === '/dsh-bot/api/config') return jsonResponse({ ok: true, config: CONFIG, warnings: [], configPath: 'p' });
+    if (url === '/dsh-bot/api/test-send') return jsonResponse({ ok: false, error: '机器人还没启动：先点「启动」' });
+    return jsonResponse({ ok: true, running: false, enabled: false, stats: {} });
+  };
+  const { render, fake } = mountSection(fetchImpl);
+  let element = await settle(fake, render);
+  findAll(element, (n) => n.type === 'button' && textOf(n) === '发送测试消息')[0].props.onClick();
+  await tick();
+  element = render();
+  const text = textOf(element);
+  assert.ok(text.includes('没发出去'), text);
+  assert.ok(text.includes('先点「启动」'), text);
+  assert.ok(!text.includes('已发送'), text);
 });
 
