@@ -8,6 +8,7 @@ const REASON_TEXT = {
   timeout: "处理超时了，请稍后再发一次。",
   runner_error: "DSH 返回了错误，这次没有结果。",
   model_error: "DSH 这次没有正常完成。",
+  blocked: "这一步需要你先确认（审批或提问）。我发过确认请求；没收到回复时我会在超时后放弃。",
   no_final: "DSH 没有返回结果。",
   no_turn_end: "DSH 的返回不完整。",
   exit_nonzero: "DSH 异常退出了。",

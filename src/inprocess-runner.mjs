@@ -292,6 +292,7 @@ export function createInProcessRunner({ ctx = null, config = null, logger = null
     const texts = [];
     let endKind = null;
     let endError = null;
+    let endDetail = null;
     const total = typeof session?.seq === "number" ? session.seq : startSeq;
     for (let seq = startSeq; seq < total; seq += 1) {
       let event = null;
@@ -310,11 +311,14 @@ export function createInProcessRunner({ ctx = null, config = null, logger = null
       if (event.type === "turn/end") {
         const reason = event.data?.reason ?? {};
         endKind = typeof reason.kind === "string" ? reason.kind : "unknown";
+        // 把原始 data 留一份：blocked/timeout 这类没有 error 文案的结束原因，
+        // 只看 kind 根本没法排查
+        try { endDetail = JSON.stringify(event.data ?? {}).slice(0, 400); } catch { endDetail = null; }
         if (typeof reason.error?.message === "string") endError = reason.error.message;
         else if (typeof reason.reason?.reason === "string") endError = reason.reason.reason;
       }
     }
-    return { texts, endKind, endError };
+    return { texts, endKind, endError, endDetail };
   }
 
   /** 驱动一轮：followup 之后等 whenIdle，并且用定时器保证卡住的回合不会把整个 runner 拖死。 */
@@ -438,7 +442,7 @@ export function createInProcessRunner({ ctx = null, config = null, logger = null
         return finish("timeout");
       }
 
-      const { texts, endKind, endError } = collectTurn(record.agent?.session, turn.startSeq);
+      const { texts, endKind, endError, endDetail } = collectTurn(record.agent?.session, turn.startSeq);
       // 预设可能只提供"延迟加载"的工具，模型服务端会拒绝整次请求；这时去掉预设重建会话再试一次，
       // 让基座工具（默认非延迟）顶上来——比把整条链路判死更有用（只重试一次）
       if (record.preset !== null && !retriedWithoutPreset && /defer_loading|deferred/i.test(String(endError ?? ""))) {
@@ -473,6 +477,12 @@ export function createInProcessRunner({ ctx = null, config = null, logger = null
         return finish("model_error", { text, extra: { turnEndKind: endKind, turnError: endError } });
       }
       // endKind 为空表示这批事件里没有 turn/end（不同 DSH 版本的事件粒度不同），按正常完成处理
+      // blocked = 这一轮停在一个"需要人工确认"的状态（审批/提问），不是模型失败；
+      // 单独给它一个 reason，让人在 QQ 里能看懂要做什么
+      if (endKind === "blocked") {
+        diag("warn", "回合停在待确认状态", { sessionId: sid, detail: endDetail });
+        return finish("blocked", { text, extra: { turnEndKind: "blocked", turnDetail: endDetail } });
+      }
       if (endKind === null || endKind === "completed") {
         // 活着但没吐出文字：和 headless 的 no_final 对齐，别报成成功
         return finish(text === "" ? "no_final" : "ok", { text });
