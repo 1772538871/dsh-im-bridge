@@ -32,7 +32,7 @@ const COMMON_FIELDS = [
   field('asr.command', '语音转写命令（可留空）', 'text', { placeholder: 'whisper' }),
   field('asr.args', '语音转写参数', 'stringList'),
   field('asr.timeoutMs', '语音转写超时（毫秒）', 'number', { placeholder: '60000' }),
-  field('log.level', '日志级别', 'select', { placeholder: 'info', help: '可选：debug / info / warn / error' }),
+  field('log.level', '日志级别', 'select', { placeholder: 'info', options: ['debug', 'info', 'warn', 'error'], help: '可选：debug / info / warn / error' }),
   field('dsh.binPath', 'DSH 入口路径（留空自动探测）', 'text', { placeholder: 'E:\\Local\\npm\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js' }),
   field('dsh.profile', 'DSH profile 名', 'text', { required: true, placeholder: 'im-bridge' }),
   field('dsh.cwd', 'DSH 工作目录（留空用 <数据目录>/workspace）', 'text'),
@@ -69,7 +69,7 @@ const PLATFORMS = [
   },
   {
     id: 'wechat',
-    label: '微信',
+    label: '微信（未实现）',
     description: '尚未实现：选择它保存配置可以，但启动会明确返回"未实现"。',
     fields: PLATFORM_FIELDS.wechat.concat(COMMON_FIELDS)
   }
