@@ -146,7 +146,7 @@ test("inprocess：没给 sessionId 时自己发一个并回传，调用方据此
   const runner = createInProcessRunner({ ctx: fakeCtx({ agents: service }), config: configFor() });
   const result = await runner.run({ prompt: "首条消息" });
   assert.equal(result.ok, true);
-  assert.match(result.sessionId, /^inprocess-/);
+  assert.match(result.sessionId, /^session-[0-9a-f-]{36}$/);
   assert.equal(state.created[0].sessionId, result.sessionId);
   await runner.stop();
 });

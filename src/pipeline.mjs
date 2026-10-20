@@ -120,7 +120,10 @@ export function createPipeline({
     if (reason === "cwd_missing") {
       return `DSH 工作目录不存在或无法进入：${result?.cwd ?? config?.dsh?.cwd ?? "(未配置)"}`;
     }
-    return REASON_TEXT[reason] ?? "处理失败。";
+    const base = REASON_TEXT[reason] ?? "处理失败。";
+    // runner 若给出具体原因（turn/end 的 error），附一句短的：否则用户只看到"没有正常完成"，没法排查
+    const detail = typeof result?.turnError === "string" ? result.turnError : typeof result?.detail === "string" ? result.detail : typeof result?.error === "string" ? result.error : "";
+    return detail === "" ? base : base + "（" + String(detail).replace(/\s+/g, " ").slice(0, 160) + "）";
   };
 
   async function deliver(message, text) {

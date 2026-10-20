@@ -286,7 +286,8 @@ export function createInProcessRunner({ ctx = null, config = null, logger = null
     if (sid === null) {
       // 调用方没给 id（首条消息）：自己发一个，并随 result.sessionId 交回去由 sessions.json 落盘
       sessionSeq += 1;
-      sid = "inprocess-" + now().toString(36) + "-" + sessionSeq;
+      // 用 DSH 自己的 id 约定（session-<uuid>）：自造前缀撞过内部对会话 id 的假设
+      sid = "session-" + randomUUID();
     }
     const budget =
       Number.isFinite(timeoutMs) && timeoutMs > 0
@@ -298,7 +299,13 @@ export function createInProcessRunner({ ctx = null, config = null, logger = null
     const finish = (reason, { text = "", echoId = sid, extra = {} } = {}) => {
       const result = { ok: reason === "ok", text, sessionId: echoId, reason, durationMs: now() - startedAt, ...extra };
       if (result.ok) diag("debug", "inprocess 调用成功", { durationMs: result.durationMs });
-      else diag("warn", "inprocess 调用失败", { reason });
+      else
+        diag("warn", "inprocess 调用失败", {
+          reason,
+          turnEndKind: extra.turnEndKind ?? null,
+          turnError: typeof extra.turnError === "string" ? extra.turnError.slice(0, 300) : null,
+          error: typeof extra.error === "string" ? extra.error.slice(0, 300) : null
+        });
       return result;
     };
 
