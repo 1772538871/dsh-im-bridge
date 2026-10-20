@@ -12,6 +12,20 @@
     "reconnectMinMs": 1000,
     "reconnectMaxMs": 30000
   },
+  "qqbot": {
+    // 官方 QQ 机器人（QQ Bot API v2）：node bin/qqbot.mjs --config bridge.config.json
+    // AppID / AppSecret 在 QQ 开放平台管理端获取
+    "appId": "",
+    // 建议留空，改用环境变量 QQBOT_CLIENT_SECRET，别把密钥写进文件
+    "clientSecret": "",
+    // 正式环境 https://api.bot.qq.com；沙箱环境请以开放平台文档为准
+    "apiBase": "https://api.bot.qq.com",
+    // GROUP_AND_C2C_EVENT = 1 << 25，单聊 + 群 @ 事件都在这一位
+    "intents": 33554432,
+    "shard": [0, 1],
+    "reconnectMinMs": 1000,
+    "reconnectMaxMs": 30000
+  },
   "dsh": {
     // 留空 = 用当前 node（process.execPath）
     "nodePath": "",

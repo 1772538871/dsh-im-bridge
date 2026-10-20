@@ -44,7 +44,36 @@ dsh --profile im-bridge --from-default-profile headless --dump-config | Out-Null
 # 末行应为 {"type":"final","text":"OK"}
 ```
 
-## 快速开始
+## 作为 DSH 插件安装（设置里多一个「dsh bot」）
+
+这个仓库同时是一个 **DSH 插件包**：装进 profile 后，DSH 的设置侧栏会多出「dsh bot」一页，可以在里面选平台、填参数、开关运行时，不用再手改配置文件。
+
+```powershell
+# 1) 装进你要用的 profile（本地目录直接装）
+dsh plugin --profile web add E:\Projects\dsh-im-bridge
+# 2) 重启 DSH（组合在启动时完成，热更不会新增插件行）
+dsh web
+```
+
+装完后：设置侧栏 →「dsh bot」→ 选平台（`qq-napcat` / `qq-official`）→ 填参数 → 保存 → 点启动。
+
+### 安装时可能踩的两个坑
+
+| 现象 | 原因 / 处理 |
+| --- | --- |
+| `ERR_PNPM_UNEXPECTED_STORE`（store 位置不一致） | 该 profile 的 `node_modules` 当初是用另一个 store 装的。把现存 store 显式传给 pnpm：`dsh plugin --profile web add <路径> --store-dir C:\Users\<你>\AppData\Local\pnpm\store\v10`（值可从 `profiles/<name>/node_modules/.modules.yaml` 的 `storeDir` 读到） |
+| 装完设置里没有「dsh bot」 | ① 没重启（必须重启 `dsh web`）；② 包里缺 `dsh.bundle.patch`（CLI 只会警告 "installed as a plain dependency, not a profile layer"）；③ `profiles/<name>/package.json` 的 `dsh.profile.bundles` 里没有 `dsh-im-bridge` |
+
+### 插件把配置存在哪
+
+- 配置：`<DSH_HOME>/dsh-bot/config.json`（可用 `DSH_BOT_CONFIG` 覆盖）。**设置页写的就是这个文件**，和命令行共用同一份。
+- 消息附件 / 日志 / 会话映射：仍然在 `storage.rootDir`（默认 `E:\dsh-im-bridge-data`），落 `C:\` 会告警。
+- `AppSecret`、`accessToken` 这类密钥只存进上面那个配置文件，**不会写进 profile 的 patch 文件**，也不会在 `GET /config` 里明文返回（回显 `***`，提交 `***` 表示不修改）。
+
+### 设置页能配什么
+
+平台（`qq-napcat` / `qq-official`）、启用开关、白名单（一行一个 QQ 号 / 群号）、群内是否必须 @、限流与并发、回复分段长度、数据目录与保留天数、日志级别、ASR 转写命令、DSH 入口（`binPath` / `profile` / `cwd` / 超时 / 权限模式），以及平台专属项（NapCat 的 `wsUrl`+`accessToken`；官方机器人的 `appId`+`appSecret`）。
+## 快速开始（命令行方式）
 
 ```powershell
 git clone git@github.com:1772538871/dsh-im-bridge.git

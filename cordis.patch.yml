@@ -1,0 +1,4 @@
+- insert:
+    - id: dsh-bot
+      name: 'dsh-im-bridge'
+      config: {}

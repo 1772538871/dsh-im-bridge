@@ -21,6 +21,19 @@ const DEFAULTS = {
   },
   reply: { maxChunkChars: 1500, errorPrefix: '[bridge] ', showSessionId: false },
   asr: { command: '', args: [], timeoutMs: 60000 },
+  // intents 默认 GROUP_AND_C2C_EVENT = 1 << 25：单聊与群 @ 事件同属这一位
+  qqbot: {
+    appId: '',
+    clientSecret: '',
+    apiBase: 'https://api.bot.qq.com',
+    intents: 1 << 25,
+    shard: [0, 1],
+    reconnectMinMs: 1000,
+    reconnectMaxMs: 30000,
+    requestTimeoutMs: 15000,
+    msgSeqStart: 1,
+    maxPassiveReplies: 0
+  },
   log: { level: 'info' }
 };
 
@@ -242,6 +255,7 @@ function normalize(raw, options) {
   const securityRaw = section('security');
   const replyRaw = section('reply');
   const asrRaw = section('asr');
+  const qqbotRaw = section('qqbot');
   const logRaw = section('log');
 
   const wsUrl = text(onebotRaw, 'onebot', 'wsUrl', DEFAULTS.onebot.wsUrl).trim();
@@ -283,6 +297,24 @@ function normalize(raw, options) {
         dshEnv[k] = typeof v === 'string' ? v : String(v);
       }
     }
+  }
+
+  // API 域名是唯一的接入点：沙箱与正式环境只有这里不同，所以必须可配
+  const qqApiBase = text(qqbotRaw, 'qqbot', 'apiBase', DEFAULTS.qqbot.apiBase).trim() || DEFAULTS.qqbot.apiBase;
+  if (!/^https?:\/\//i.test(qqApiBase)) {
+    problems.push('qqbot.apiBase 必须以 http:// 或 https:// 开头，当前为 ' + JSON.stringify(qqApiBase));
+  }
+
+  const rawShard = qqbotRaw.shard;
+  let qqShard = DEFAULTS.qqbot.shard.slice();
+  if (rawShard !== undefined && rawShard !== null) {
+    const okShard =
+      Array.isArray(rawShard) &&
+      rawShard.length === 2 &&
+      Number.isFinite(Number(rawShard[0])) &&
+      Number.isFinite(Number(rawShard[1]));
+    if (okShard) qqShard = [Math.floor(Number(rawShard[0])), Math.floor(Number(rawShard[1]))];
+    else problems.push('qqbot.shard 必须是 [当前分片, 总分片] 两个数字，当前为 ' + JSON.stringify(rawShard));
   }
 
   const logLevel = text(logRaw, 'log', 'level', DEFAULTS.log.level).trim();
@@ -330,6 +362,19 @@ function normalize(raw, options) {
       command: text(asrRaw, 'asr', 'command', DEFAULTS.asr.command),
       args: list(asrRaw, 'asr', 'args', DEFAULTS.asr.args),
       timeoutMs: num(asrRaw, 'asr', 'timeoutMs', DEFAULTS.asr.timeoutMs, 1000)
+    },
+    qqbot: {
+      // appId/clientSecret 允许为空：OneBot 侧配置不该因为 QQ 未就绪就整体失败，必填校验在 bin/qqbot.mjs
+      appId: text(qqbotRaw, 'qqbot', 'appId', DEFAULTS.qqbot.appId).trim(),
+      clientSecret: text(qqbotRaw, 'qqbot', 'clientSecret', DEFAULTS.qqbot.clientSecret).trim(),
+      apiBase: qqApiBase,
+      intents: num(qqbotRaw, 'qqbot', 'intents', DEFAULTS.qqbot.intents, 0),
+      shard: qqShard,
+      reconnectMinMs: num(qqbotRaw, 'qqbot', 'reconnectMinMs', DEFAULTS.qqbot.reconnectMinMs, 0),
+      reconnectMaxMs: num(qqbotRaw, 'qqbot', 'reconnectMaxMs', DEFAULTS.qqbot.reconnectMaxMs, 0),
+      requestTimeoutMs: num(qqbotRaw, 'qqbot', 'requestTimeoutMs', DEFAULTS.qqbot.requestTimeoutMs, 1000),
+      msgSeqStart: num(qqbotRaw, 'qqbot', 'msgSeqStart', DEFAULTS.qqbot.msgSeqStart, 1),
+      maxPassiveReplies: num(qqbotRaw, 'qqbot', 'maxPassiveReplies', DEFAULTS.qqbot.maxPassiveReplies, 0)
     },
     log: {
       dir: logDir,
@@ -428,6 +473,8 @@ export function formatConfigSummary(config) {
   const lines = [];
   lines.push('dsh-im-bridge 配置摘要');
   lines.push('  OneBot    : ' + ob.wsUrl + '（accessToken ' + (ob.accessToken ? '已配置' : '未配置') + '，重连 ' + ob.reconnectMinMs + '-' + ob.reconnectMaxMs + 'ms）');
+  const qq = c.qqbot || {};
+  lines.push('  QQ Bot    : ' + (qq.apiBase || '(未配置)') + '（appId ' + (qq.appId ? '已配置' : '未配置') + '，intents ' + qq.intents + '，分片 [' + (qq.shard || []).join(', ') + ']）');
   lines.push('  dsh 入口  : node=' + (dsh.nodePath || '(未配置)'));
   lines.push('              bin =' + (dsh.binPath || '(未配置)'));
   lines.push('  dsh 参数  : profile=' + dsh.profile + '，permissionMode=' + dsh.permissionMode + '，超时=' + Math.round((dsh.timeoutMs || 0) / 1000) + 's');
