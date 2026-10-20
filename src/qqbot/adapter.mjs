@@ -51,7 +51,8 @@ export function createQqBotAdapter({ config = {}, logger = null, fetchImpl = glo
   const tokenProvider = createTokenProvider({
     appId: resolved.appId,
     clientSecret: resolved.clientSecret,
-    apiBase: resolved.apiBase,
+    // token 接口只在正式域提供（沙箱域实测 404 code 11001），不能跟着 apiBase 一起切到沙箱
+    apiBase: DEFAULT_API_BASE,
     fetchImpl,
     logger,
     timeoutMs: resolved.requestTimeoutMs,
