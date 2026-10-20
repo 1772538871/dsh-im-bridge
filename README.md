@@ -59,21 +59,17 @@ dsh web
 
 ## 界面预览
 
-设置页就是 DSH 设置侧栏里多出来的一页：
+装好之后，DSH 的设置侧栏会多出「dsh bot」这一页：
 
-```
-设置 → dsh bot
-  平台      [ QQ 官方机器人 ▾ ]
-  AppID     1029*****
-  AppSecret ***            ← 只存本机，页面永远回显 ***
-  白名单    你的 QQ 号（留空 = 拒绝启动）
-  数据目录  E:\dsh-im-bridge-data
-  [保存]  [启动]  [停止]   ← 状态行：运行中 · 平台 qq-official · 收到 12 / 已处理 11
-```
+![设置页](docs/images/settings.png)
 
-> 截图（`docs/images/settings.png` / `docs/images/chat.png`）待补：见 [docs/images/README.md](docs/images/README.md)。
+选平台、填 AppID / AppSecret、白名单、数据目录，然后 保存 → 启动。状态行会实时显示 `运行中 · 平台 qq-official · 收到 N / 已处理 N / 拒绝 N / 失败 N`。
 
----
+QQ 那一侧就是普通聊天窗口：
+
+![QQ 对话](docs/images/chat.png)
+
+> 图片说明见 [docs/images/README.md](docs/images/README.md)。设置页截图取自 0.3.x（0.4 起新增了「DSH 调用方式」与「审批」两组字段）。
 
 ## 文档
 
