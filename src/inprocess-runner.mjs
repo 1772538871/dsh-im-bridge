@@ -170,6 +170,30 @@ export function createInProcessRunner({ ctx = null, config = null, logger = null
     }
   }
 
+  /**
+   * 归档的会话会被 dsh-api-session-controller 的 pre-step 门禁直接 reject，
+   * 回合以 kind:"blocked" 结束且没有任何错误文案 —— 看起来就像"模型没干活"。
+   * 这里在开跑前检查并恢复归档；恢复不了就换一个新的会话 id（历史仍在磁盘上）。
+   */
+  async function ensureNotArchived(sessionId) {
+    const registry = service("workspaceRegistry");
+    if (!registry) return sessionId;
+    try {
+      const archived = Array.isArray(registry.archivedSessionIds) ? registry.archivedSessionIds : [];
+      if (!archived.includes(sessionId)) return sessionId;
+      if (typeof registry.unarchiveSession === "function") {
+        await registry.unarchiveSession(sessionId);
+        diag("info", "会话处于归档状态，已自动恢复", { sessionId });
+        return sessionId;
+      }
+    } catch (error) {
+      diag("warn", "恢复归档会话失败，改为新建会话", { sessionId, error: errorText(error).slice(0, 200) });
+    }
+    const fresh = "session-" + randomUUID();
+    diag("warn", "会话已归档且无法恢复，改用新会话", { oldSessionId: sessionId, newSessionId: fresh });
+    return fresh;
+  }
+
   async function openHandle(sessionId, chatKey, options0 = {}) {
     const agents = service("agents");
     const models = service("agentDefaultModel");
@@ -413,6 +437,7 @@ export function createInProcessRunner({ ctx = null, config = null, logger = null
     };
 
     if (stopped) return finish("runner_error", { extra: { error: "runner 已停止" } });
+    sid = await ensureNotArchived(sid);
     if (!service("agents")) return finish("not_configured", { echoId: givenId });
 
     let retriedWithoutPreset = false;
