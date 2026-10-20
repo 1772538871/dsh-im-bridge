@@ -19,6 +19,7 @@
 | `pipeline` | 消息管线（解析 → 白名单 → 落盘 → 调 DSH → 回复） |
 | `runner` | 执行器：headless / sdk / inprocess |
 | `approval` | QQ 审批桥 |
+| `questions` | QQ 提问桥（`user-questions/request` 钩子） |
 | `plugin` | 插件宿主半边（HTTP 路由、配置存储、运行时接线） |
 | `client` | 设置页（`lib/client.js`，手写 ModuleLoader bundle） |
 | `prompt` | 给 DSH 的提示词拼装 |
@@ -49,7 +50,7 @@ dsh plugin --profile web add E:\Projects\dsh-im-bridge --store-dir <你现有 pn
 
 ## DSH 升级后要做什么（重要）
 
-这个插件有两条腿：**稳定的 CLI/JSON-RPC 腿**（`headless` / `sdk`）和**私有 API 腿**（`inprocess` + QQ 审批桥，依赖 `ctx.agents.create` 与 `approval/request` 钩子）。
+这个插件有两条腿：**稳定的 CLI/JSON-RPC 腿**（`headless` / `sdk`）和**私有 API 腿**（`inprocess` + QQ 审批/提问桥，依赖 `ctx.agents.create`、`approval/request` 与 `user-questions/request` 两个瀑布钩子）。
 
 升级 DSH 之后：
 
@@ -57,7 +58,7 @@ dsh plugin --profile web add E:\Projects\dsh-im-bridge --store-dir <你现有 pn
 2. `node --test` 全绿；
 3. 重启 `dsh web` → 设置 → dsh bot → 启动；
 4. 给机器人发「你好」，确认 `E:\dsh-im-bridge-data\logs\bridge-*.log` 里有 `网关就绪（READY）` 与回合记录；
-5. `inprocess` 若出问题，把 `dsh.runner` 切回 `sdk`（聊天不受影响，只是没有审批往返）；
+5. `inprocess` 若出问题，把 `dsh.runner` 切回 `sdk`（聊天不受影响，只是没有审批与提问往返）；
 6. 确认无误后把新版本加进 `package.json` 的 `dsh.compatibility.dshReleases`，提交 `chore(compat): …`。
 
 ## 目录地图
@@ -68,7 +69,9 @@ lib/client.js        设置页 bundle（手写 __ModuleLoader__ 形状）
 src/plugin/          配置存储、HTTP 路由、平台字段表、运行时
 src/dsh.mjs          headless 执行器
 src/sdk-runner.mjs   sdk 长驻执行器
-src/inprocess-runner.mjs  进程内执行器（配合审批桥）
+src/inprocess-runner.mjs  进程内执行器（配合审批桥/提问桥）
+src/question-bridge.mjs  提问桥（user-questions/request → QQ 选择题）
+src/approval-bridge.mjs  审批桥（approval/request → QQ 审批卡）
 src/onebot|qqbot/    两个平台适配器
 src/pipeline.mjs     平台无关管线
 bin/                 命令行入口

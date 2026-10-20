@@ -34,6 +34,9 @@ export const DEFAULT_CONFIG = {
   reply: { maxChunkChars: 1500, errorPrefix: '[bridge] ', showSessionId: false, ack: true, progressEveryMs: 45000, progressMax: 2 },
   // 只对 inprocess 有意义：把 DSH 的审批请求转发到 IM，超时按拒绝处理（5 分钟）
   approval: { enabled: true, timeoutMs: 300000, scope: 'own', chatKey: '' },
+  // 只对 inprocess 有意义：把 DSH 的提问（ask_user_question 卡片）转发到 IM，超时按跳过处理，
+  // 等多久跟审批共用 approval.timeoutMs——用户对"它会等我多久"只该记一个数字
+  questions: { enabled: true },
   asr: { command: '', args: [], timeoutMs: 60000 },
   log: { dir: '', level: 'info' },
   qqNapcat: { wsUrl: 'ws://127.0.0.1:3001', accessToken: '', reconnectMinMs: 1000, reconnectMaxMs: 30000 },
@@ -277,6 +280,7 @@ export function normalizeConfig(raw, options = {}) {
   const securityRaw = section('security');
   const replyRaw = section('reply');
   const approvalRaw = section('approval');
+  const questionsRaw = section('questions');
   const asrRaw = section('asr');
   const logRaw = section('log');
   const napcatRaw = section('qqNapcat');
@@ -362,6 +366,9 @@ export function normalizeConfig(raw, options = {}) {
       timeoutMs: readInt(approvalRaw, 'approval.timeoutMs', 'timeoutMs', DEFAULT_CONFIG.approval.timeoutMs, 10000),
       scope: readText(approvalRaw, 'approval.scope', 'scope', DEFAULT_CONFIG.approval.scope) === 'all' ? 'all' : 'own',
       chatKey: readText(approvalRaw, 'approval.chatKey', 'chatKey', DEFAULT_CONFIG.approval.chatKey)
+    },
+    questions: {
+      enabled: readBool(questionsRaw, 'questions.enabled', 'enabled', DEFAULT_CONFIG.questions.enabled)
     },
     asr: {
       command: readText(asrRaw, 'asr.command', 'command', DEFAULT_CONFIG.asr.command),

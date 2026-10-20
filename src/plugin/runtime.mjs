@@ -14,6 +14,7 @@ const CORE_MODULES = {
   sdkRunner: '../sdk-runner.mjs',
   inprocessRunner: '../inprocess-runner.mjs',
   approvalBridge: '../approval-bridge.mjs',
+  questionBridge: '../question-bridge.mjs',
   onebotParse: '../onebot/parse.mjs',
   onebotSend: '../onebot/send.mjs',
   onebotClient: '../onebot/client.mjs',
@@ -143,7 +144,8 @@ export function createRuntime({ configStore, logger = null, modules = null, now 
     logger: null,
     sdkRunner: null,
     inprocessRunner: null,
-    approvalBridge: null
+    approvalBridge: null,
+    questionBridge: null
   };
 
   const diag = (level, message, extra) => {
@@ -280,15 +282,16 @@ export function createRuntime({ configStore, logger = null, modules = null, now 
         // 必须和 pipeline.chatKeyOf 的兜底一致，否则 sessions.json 里的键对不上
         return message?.chatType === 'group' ? 'group_' + (message?.groupId ?? '') : 'private_' + (message?.userId ?? '');
       };
-      const sendApprovalText = async (chatKey, text) => {
+      // 桥不认识 QQ：它们只把"给这个会话发一段文字"委托出来；kind 只决定日志措辞
+      const sendBridgeText = async (chatKey, text, kind = '审批') => {
         const message = jobState.chats.get(chatKey);
         if (!message) {
-          diag('warn', '审批消息没有可用的对话目标（该会话还没来过消息）', { chatKey });
+          diag('warn', kind + '消息没有可用的对话目标（该会话还没来过消息）', { chatKey });
           return;
         }
         const sendReply = sendReplyOf();
         if (typeof sendReply !== 'function') {
-          diag('warn', '审批消息发不出去：没有可用的 sendReply', { chatKey });
+          diag('warn', kind + '消息发不出去：没有可用的 sendReply', { chatKey });
           return;
         }
         await sendReply({ client: adapter.client, message, text, config: core, logger: runtimeLogger });
@@ -314,12 +317,13 @@ export function createRuntime({ configStore, logger = null, modules = null, now 
       // 默认 headless，切到 sdk 才需要额外握手参数，所以这里只在 sdk 分支建 runner。
       let runDsh = resolved.modules.dsh.runDsh;
       const startInProcess = async () => {
-        const extra = await resolveModules(['inprocessRunner', 'approvalBridge', 'onebotParse', 'onebotSend'], modules);
+        const extra = await resolveModules(['inprocessRunner', 'approvalBridge', 'questionBridge', 'onebotParse', 'onebotSend'], modules);
         if (extra.missing.length > 0) {
           return fail('缺少进程内调用模块：' + extra.missing.map((item) => item.name + '（' + item.error + '）').join('；'));
         }
         const createInProcessRunner = extra.modules.inprocessRunner?.createInProcessRunner;
         const createApprovalBridge = extra.modules.approvalBridge?.createApprovalBridge;
+        const createQuestionBridge = extra.modules.questionBridge?.createQuestionBridge;
         if (typeof createInProcessRunner !== 'function') return fail('进程内 runner 尚未就绪');
         if (!ctx || typeof ctx.get !== 'function') {
           return fail('inprocess 方式需要 DSH 主进程上下文，但插件没有拿到可用的 ctx（请改用 headless 或 sdk）');
@@ -330,12 +334,13 @@ export function createRuntime({ configStore, logger = null, modules = null, now 
 
         const inprocessLogger = typeof runtimeLogger.child === 'function' ? runtimeLogger.child('inprocess') : runtimeLogger;
         const bridgeLogger = typeof runtimeLogger.child === 'function' ? runtimeLogger.child('approval') : runtimeLogger;
+        const questionLogger = typeof runtimeLogger.child === 'function' ? runtimeLogger.child('questions') : runtimeLogger;
         if (typeof createApprovalBridge === 'function') {
           state.approvalBridge = createApprovalBridge({
             ctx,
             logger: bridgeLogger,
             // 桥不认识 QQ：它只把"给这个会话发一段文字"这件事委托出来
-            send: (chatKey, text) => sendApprovalText(chatKey, text),
+            send: (chatKey, text) => sendBridgeText(chatKey, text, '审批'),
             config: core
           });
           const attached = state.approvalBridge.attach();
@@ -343,11 +348,38 @@ export function createRuntime({ configStore, logger = null, modules = null, now 
             diag('warn', '审批转发未启用，进程内调用照常但没有 IM 审批', { error: attached.error });
           }
         }
+        // 提问桥与审批桥同构：agent 提问也要能从 QQ 回答，否则网页弹卡、QQ 一片安静
+        if (typeof createQuestionBridge === 'function') {
+          state.questionBridge = createQuestionBridge({
+            ctx,
+            logger: questionLogger,
+            send: (chatKey, text) => sendBridgeText(chatKey, text, '提问'),
+            config: core
+          });
+          const attached = state.questionBridge.attach();
+          if (attached && attached.ok === false && attached.error !== 'questions.disabled') {
+            diag('warn', '提问转发未启用，进程内调用照常但没有 IM 提问', { error: attached.error });
+          }
+        }
+        // runner 只认识一个 bridge：own/release 必须同时落到两座桥，否则提问桥永远认不到 agent。
+        // 这里捕获局部引用而不是每次读 state：stopInProcess 会先清 state 再停 runner。
+        const approvalBridge = state.approvalBridge;
+        const questionBridge = state.questionBridge;
+        const runnerBridge = {
+          own(agent, meta) {
+            if (approvalBridge && typeof approvalBridge.own === 'function') approvalBridge.own(agent, meta);
+            if (questionBridge && typeof questionBridge.own === 'function') questionBridge.own(agent, meta);
+          },
+          release(agent) {
+            if (approvalBridge && typeof approvalBridge.release === 'function') approvalBridge.release(agent);
+            if (questionBridge && typeof questionBridge.release === 'function') questionBridge.release(agent);
+          }
+        };
         state.inprocessRunner = createInProcessRunner({
           ctx,
           config: core,
           logger: inprocessLogger,
-          bridge: state.approvalBridge
+          bridge: runnerBridge
         });
         runDsh = (args = {}) =>
           state.inprocessRunner.run({
@@ -356,8 +388,9 @@ export function createRuntime({ configStore, logger = null, modules = null, now 
             // 每条消息都要重新定位归属：会话是首次建立时还不存在 sessions.json 的映射
             chatKey: chatKeyForSession(args.sessionId ?? null)
           });
-        runtimeLogger.info('已启用进程内 runner（审批请求转发到 IM）', {
-          approval: state.approvalBridge ? state.approvalBridge.status() : null
+        runtimeLogger.info('已启用进程内 runner（审批与提问请求转发到 IM）', {
+          approval: state.approvalBridge ? state.approvalBridge.status() : null,
+          questions: state.questionBridge ? state.questionBridge.status() : null
         });
         return { ok: true };
       };
@@ -392,23 +425,25 @@ export function createRuntime({ configStore, logger = null, modules = null, now 
         deps: adapter.deps ?? null
       });
 
-      // onEvent 外层再包一层：审批答复必须先被桥看到，命中就只回一句确认，绝不落进 pipeline 当新任务
+      // onEvent 外层再包一层：提问/审批答复必须先被桥看到，命中就只回一句确认，绝不落进 pipeline 当新任务
       await adapter.start(async (raw) => {
-        if (state.approvalBridge) {
+        if (state.questionBridge || state.approvalBridge) {
           try {
             const parsed = parseInbound(raw);
             const message = parsed && parsed.kind === 'message' ? parsed.message : null;
             if (message) {
               const chatKey = chatKeyFor(message);
-              // 记下每个会话最近一条入站消息：审批消息要能回到同一个会话（含 QQ 官方的回复目标）
+              // 记下每个会话最近一条入站消息：桥的消息要能回到同一个会话（含 QQ 官方的回复目标）
               jobState.chats.set(chatKey, message);
               jobState.lastChatKey = chatKey;
               const text = typeof message.text === 'string' ? message.text : '';
+              // 提问排在审批前面：两者同时挂着时，任何文本都可能是"问题的答案"，而审批只认很窄的词表
+              if (state.questionBridge && state.questionBridge.handleReply({ chatKey, text })) return;
               // 命中就 return：这条是审批答复，不能再当新任务派下去
-              if (state.approvalBridge.handleReply({ chatKey, text })) return;
+              if (state.approvalBridge && state.approvalBridge.handleReply({ chatKey, text })) return;
             }
           } catch (error) {
-            diag('debug', '处理审批答复时出错，按普通消息继续', { error: errorText(error) });
+            diag('debug', '处理提问/审批答复时出错，按普通消息继续', { error: errorText(error) });
           }
         }
         return pipeline.handleEvent(raw).catch((error) => {
@@ -453,9 +488,18 @@ export function createRuntime({ configStore, logger = null, modules = null, now 
   /** 收掉 inprocess 的 runner 与审批桥：先摘监听，再释放 agent，顺序反过来会漏掉"正在等的审批"。 */
   async function stopInProcess({ quiet = false } = {}) {
     const approvalBridge = state.approvalBridge;
+    const questionBridge = state.questionBridge;
     const inprocessRunner = state.inprocessRunner;
     state.approvalBridge = null;
+    state.questionBridge = null;
     state.inprocessRunner = null;
+    if (questionBridge && typeof questionBridge.detach === 'function') {
+      try {
+        questionBridge.detach();
+      } catch (error) {
+        if (!quiet) diag('warn', '卸载提问桥失败', { error: errorText(error) });
+      }
+    }
     if (approvalBridge && typeof approvalBridge.detach === 'function') {
       try {
         approvalBridge.detach();

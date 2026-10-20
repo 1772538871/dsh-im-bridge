@@ -102,6 +102,9 @@ const COMMON_FIELDS = [
     placeholder: '300000',
     help: '超时按"拒绝"处理——不用"取消"是因为取消会让模型立刻重试同一个操作，变成死循环。'
   }),
+  field('questions.enabled', 'Agent 提问时是否发到 QQ（只有 inprocess 方式）', 'boolean', {
+    help: 'Agent 需要你拿主意时会弹一张选择题；打开后这张题会发到 QQ，回数字或直接说话都算回答。超时按"跳过"处理，等多久跟上面的审批时长一致。'
+  }),
   field('dsh.provider', 'SDK 方式用哪个模型供应商（只有 sdk 用得上）', 'text', {
     placeholder: 'deepseek-official',
     help: 'headless 方式忽略这一项。'

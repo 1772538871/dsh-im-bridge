@@ -116,6 +116,10 @@ function fakeCtx({ services = {}, logger = quietLogger() } = {}) {
     approvalListener() {
       const entry = listeners.find((item) => item.event === "approval/request" && item.active);
       return entry ? entry.fn : null;
+    },
+    questionListener() {
+      const entry = listeners.find((item) => item.event === "user-questions/request" && item.active);
+      return entry ? entry.fn : null;
     }
   };
 }
@@ -269,7 +273,49 @@ test("接线：审批请求转到 QQ，回 1 放行；这条回复不会再被�
   });
 });
 
-test("接线：stop 会 dispose agent 并摘掉审批监听", async () => {
+test("接线：提问请求转到 QQ，回 2 就是选第 2 项；这条回复不会再被当成新任务", async () => {
+  await withRuntime(async ({ runtime, ctx, onebot, agents }) => {
+    const started = await runtime.start();
+    assert.equal(started.ok, true, JSON.stringify(started));
+    // 提问桥必须 prepend 挂上，否则会被浏览器提问面板先认领
+    const entry = ctx.listeners.find((item) => item.event === "user-questions/request");
+    assert.ok(entry, "inprocess 必须挂 user-questions/request 监听");
+    assert.equal(entry.opts.prepend, true);
+
+    onebot.client.onEvent(oneBotMessage("帮我整理这份 PDF"));
+    await waitFor(() => agents.followups === 1, "第一轮模型调用");
+
+    const listener = ctx.questionListener();
+    const agent = agents.created[0].agent;
+    const pending = listener(
+      {
+        agent,
+        questions: [
+          {
+            id: "format",
+            header: "需要你选一个",
+            question: "整理成什么形态",
+            options: [{ label: "全文转录留底 + 精华笔记 + 索引" }, { label: "只要结构化笔记 + 索引" }]
+          }
+        ]
+      },
+      () => Promise.resolve({ answers: [] })
+    );
+
+    const texts = onebot.client.texts();
+    const askText = texts[texts.length - 1];
+    assert.match(askText, /【提问 #1】需要你选一个/);
+    assert.match(askText, /· 问题：整理成什么形态/);
+    assert.match(askText, / {2}2\. 只要结构化笔记 \+ 索引/);
+
+    // 用户回 "2"：必须由提问桥认领，不能派给 pipeline
+    onebot.client.onEvent(oneBotMessage("2"));
+    assert.deepEqual(await pending, { answers: [{ id: "format", selected: ["只要结构化笔记 + 索引"] }] });
+    assert.equal(agents.followups, 1, "提问答复不能触发新的模型轮次");
+  });
+});
+
+test("接线：stop 会 dispose agent 并摘掉提问/审批监听", async () => {
   await withRuntime(async ({ runtime, ctx, onebot, agents }) => {
     await runtime.start();
     onebot.client.onEvent(oneBotMessage("你好"));
@@ -278,5 +324,6 @@ test("接线：stop 会 dispose agent 并摘掉审批监听", async () => {
     await runtime.stop();
     assert.equal(agents.disposed.length, 1, "stop 必须 dispose 掉 agent");
     assert.equal(ctx.approvalListener(), null, "stop 必须摘掉审批监听");
+    assert.equal(ctx.questionListener(), null, "stop 必须摘掉提问监听");
   });
 });
