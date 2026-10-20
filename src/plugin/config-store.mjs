@@ -47,6 +47,8 @@ export const DEFAULT_CONFIG = {
     profile: 'im-bridge',
     agentPreset: '',
     cwd: '',
+    // 开启后每轮结束释放会话写句柄，网页才能点开这条会话看到历史
+    releaseOnIdle: false,
     timeoutMs: 300000,
     permissionMode: 'workspace-write',
     // 默认保持 headless：不动现有行为，用户显式切到 sdk 才走常驻进程
@@ -387,7 +389,7 @@ export function normalizeConfig(raw, options = {}) {
       appSecret: readText(officialRaw, 'qqOfficial.appSecret', 'appSecret', DEFAULT_CONFIG.qqOfficial.appSecret, true),
       sandbox: readBool(officialRaw, 'qqOfficial.sandbox', 'sandbox', DEFAULT_CONFIG.qqOfficial.sandbox)
     },
-    dsh: {
+    dsh: { releaseOnIdle: false,
       nodePath: readPath(dshRaw, 'dsh.nodePath', 'nodePath', DEFAULT_CONFIG.dsh.nodePath),
       binPath: readPath(dshRaw, 'dsh.binPath', 'binPath', DEFAULT_CONFIG.dsh.binPath),
       profile,

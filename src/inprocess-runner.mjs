@@ -71,6 +71,9 @@ export function installSeriesReset(agentCtx, logger = null) {
 
 export function createInProcessRunner({ ctx = null, config = null, logger = null, bridge = null, now = () => Date.now() } = {}) {
   const dsh = config?.dsh ?? {};
+  // 一轮结束后是否立刻释放会话（释放写句柄）：
+  // 不释放的话，网页里点开这条会话拿不到写句柄，历史永远是空白 —— 这是"网页空白"的真因。
+  const releaseOnIdle = dsh.releaseOnIdle === true;
   // sessionId -> { agent, dispose, chatKey, ... }：同一个会话复用同一个 handle，天然续接上下文
   const handles = new Map();
   let selectionInstallerPromise = null;
@@ -465,6 +468,7 @@ export function createInProcessRunner({ ctx = null, config = null, logger = null
     if (!service("agents")) return finish("not_configured", { echoId: givenId });
 
     let retriedWithoutPreset = false;
+    let openedHandle = false;
     state.busy = true;
     state.runs += 1;
     try {
@@ -476,6 +480,7 @@ export function createInProcessRunner({ ctx = null, config = null, logger = null
         return finish("runner_error", { extra: { error: state.lastError } });
       }
       if (opened.error) return finish(opened.error, { echoId: givenId });
+      openedHandle = true;
       const record = opened.record;
       if (typeof record.sessionId === "string" && record.sessionId !== sid) {
         diag("warn", "本轮改用新会话", { from: sid, to: record.sessionId });
@@ -542,6 +547,11 @@ export function createInProcessRunner({ ctx = null, config = null, logger = null
       }
       return finish("model_error", { text, extra: { turnEndKind: endKind } });
     } finally {
+      // 释放写句柄：网页要读这条会话的历史，也必须拿到写句柄；
+      // 我们一直占着它，用户在网页里点开就永远是空白。
+      if (openedHandle && releaseOnIdle) {
+        try { await dropHandle(sid); } catch { /* 释放失败下次 create 会退回 resume */ }
+      }
       state.busy = false;
     }
   }
