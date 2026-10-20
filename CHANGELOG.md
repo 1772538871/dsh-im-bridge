@@ -2,6 +2,14 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，语义化版本。
 
+## [0.4.1] - 2026-10-20
+
+### 修复
+- **进程内会话不进工作区**：GUI 的工作区是显式成员表，插件自建的会话不在表里 → 永远“未分组”。现在建会话后用 `workspaceRegistry.resolveByPath(cwd)` + `attachSession` 自动登记。
+- **第二条回复被平台静默丢弃**（`err_code 40054005 消息被去重`）：同一 `msg_id` 下 `msg_seq` 每次从 1 开始。现在按 `msg_id` 递增，被拒时自动改发主动消息。
+- **回合以 `blocked` 结束，且没有错误文案**：归档会话会被 `ArchivedSessionGate` 的 pre-step 门禁直接 reject（GUI 里“删除”= 归档）。现在开跑前自动 `unarchiveSession`，恢复不了就换新会话 id（历史保留）。
+- **审批回复只认 1/2/0**：现在也认 `确认 / 好的 / 可以 / 允许 / 同意`、`不行 / 不要 / 拒绝`、`取消`。
+
 ## [0.4.0] - 2026-10-20
 
 ### 新增

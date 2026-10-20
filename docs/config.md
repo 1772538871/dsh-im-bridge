@@ -79,7 +79,7 @@
 | \`enabled\` | 把审批请求转发到 QQ，等你回 1/2/0 | \`true\` |
 | \`timeoutMs\` | 多久没回就按**拒绝**处理（下限 10000） | \`300000\` |
 
-只有"沙箱升权重试"会触发审批；在 \`dsh.cwd\` 内读写/跑命令**不会**弹。\`dsh.permissionMode=danger-full-access\` 时策略变 never，整条链路静默失效。
+回复支持 `1/确认/允许/同意/好的/可以` 放行、`2/拒绝/不行/不要` 拒绝、`0/取消`。只有"沙箱升权重试"会触发审批；在 \`dsh.cwd\` 内读写/跑命令**不会**弹。\`dsh.permissionMode=danger-full-access\` 时策略变 never，整条链路静默失效。
 
 ## qqNapcat
 
