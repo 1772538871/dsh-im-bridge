@@ -226,7 +226,8 @@ test("接线：inprocess 的一条消息走真实 pipeline，回答原样回到 
       assert.equal(entry.opts.prepend, true);
 
       onebot.client.onEvent(oneBotMessage("帮我看看这个仓库"));
-      await waitFor(() => onebot.client.sent.length > 0, "回复发出");
+      // 回执（"收到，开始处理了…"）会先到，所以要等真正的模型回答
+      await waitFor(() => onebot.client.texts().some((text) => text.includes("我是进程内的回答")), "模型回答发出");
       assert.equal(agents.created.length, 1, "第一条消息才建 agent");
       const texts = onebot.client.texts();
       assert.ok(texts.some((text) => text.includes("我是进程内的回答")), JSON.stringify(texts));

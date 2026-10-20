@@ -202,6 +202,21 @@ export function createPipeline({
     return { saved, voiceTranscript };
   }
 
+  /** 粗略估个时长：字数、附件数决定模型要读多少东西。宁可给宽一点，也不要让用户干等。 */
+  function estimateSecondsOf(message, saved) {
+    const chars = typeof message?.text === "string" ? message.text.length : 0;
+    const attachments = Array.isArray(saved) ? saved.length : 0;
+    const raw = 6 + Math.ceil(chars / 200) + attachments * 3;
+    return Math.min(180, Math.max(5, raw));
+  }
+
+  function ackTextOf(message, saved, seconds) {
+    const lines = ["收到，开始处理了（预计 " + seconds + " 秒左右）"];
+    if (Array.isArray(saved) && saved.length > 0) lines.push("· 附件 " + saved.length + " 个已经存好");
+    lines.push(seconds >= 30 ? "这活儿要一会儿，我会隔一阵报个进度" : "干完我把结果发你");
+    return lines.join("\n");
+  }
+
   async function readSession(key) {
     try {
       const value = await sessions?.get?.(key);
@@ -257,6 +272,27 @@ export function createPipeline({
         const sessionId = await readSession(chatKey);
         const prompt = buildPrompt({ config, message, savedAttachments: saved, voiceTranscript });
 
+        // 长任务最怕"静默"：先回一条回执，超过阈值再报进度（用主动消息，不占被动回复配额）
+        const ackOn = config?.reply?.ack === true;
+        const seconds = estimateSecondsOf(message, saved);
+        const everyMs = Number(config?.reply?.progressEveryMs);
+        const progressEvery = Number.isFinite(everyMs) && everyMs >= 10000 ? Math.floor(everyMs) : 45000;
+        const maxRaw = Number(config?.reply?.progressMax);
+        const progressMax = Number.isFinite(maxRaw) && maxRaw >= 0 ? Math.floor(maxRaw) : 2;
+        if (ackOn) await deliver(message, ackTextOf(message, saved, seconds));
+        const startedAt = Date.now();
+        let progressTimer = null;
+        let progressSent = 0;
+        if (ackOn && progressEvery > 0 && progressMax > 0) {
+          progressTimer = setInterval(() => {
+            if (progressSent >= progressMax) return;
+            progressSent += 1;
+            const used = Math.round((Date.now() - startedAt) / 1000);
+            void deliver({ ...message, messageId: "" }, "还在处理：已用 " + used + " 秒" + (progressSent < progressMax ? "，完了我立刻发结果" : "，快好了"));
+          }, progressEvery);
+          progressTimer.unref?.();
+        }
+
         let result;
         try {
           result = await semaphore.withPermit(() => runDsh({ config, prompt, sessionId, logger }));
@@ -265,6 +301,8 @@ export function createPipeline({
           logger?.error?.("runDsh 抛错", { chatKey, error: String(error?.message ?? error) });
           await deliver(message, `${errorPrefix}调用 DSH 失败，这次没有结果。`);
           return;
+        } finally {
+          if (progressTimer) clearInterval(progressTimer);
         }
 
         if (result?.ok) {

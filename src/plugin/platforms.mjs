@@ -54,6 +54,9 @@ const COMMON_FIELDS = [
     placeholder: '8000',
     help: '太小会截断长文档，太大会很慢、很贵。'
   }),
+  field('reply.ack', '收到后先回一句「开始处理」（长任务不至于像死机）', 'boolean'),
+  field('reply.progressEveryMs', '处理过程中每隔多久报一次进度（毫秒，0=不报）', 'number', { placeholder: '45000' }),
+  field('reply.progressMax', '最多报几次进度', 'number', { placeholder: '2' }),
   field('reply.maxChunkChars', '一条回复最多多少字（超了拆成几条发）', 'number', {
     placeholder: '1500',
     help: '官方 QQ 一条消息最多回 4 次（私聊）/ 5 次（群聊），拆太多后面的会被平台拒掉，所以别设太小。'

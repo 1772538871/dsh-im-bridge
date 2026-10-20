@@ -31,7 +31,7 @@ export const DEFAULT_CONFIG = {
     maxConcurrentRuns: 2,
     maxPromptChars: 8000
   },
-  reply: { maxChunkChars: 1500, errorPrefix: '[bridge] ', showSessionId: false },
+  reply: { maxChunkChars: 1500, errorPrefix: '[bridge] ', showSessionId: false, ack: true, progressEveryMs: 45000, progressMax: 2 },
   // 只对 inprocess 有意义：把 DSH 的审批请求转发到 IM，超时按拒绝处理（5 分钟）
   approval: { enabled: true, timeoutMs: 300000, scope: 'own', chatKey: '' },
   asr: { command: '', args: [], timeoutMs: 60000 },
@@ -351,7 +351,10 @@ export function normalizeConfig(raw, options = {}) {
     reply: {
       maxChunkChars: readInt(replyRaw, 'reply.maxChunkChars', 'maxChunkChars', DEFAULT_CONFIG.reply.maxChunkChars, 1),
       errorPrefix: readText(replyRaw, 'reply.errorPrefix', 'errorPrefix', DEFAULT_CONFIG.reply.errorPrefix),
-      showSessionId: readBool(replyRaw, 'reply.showSessionId', 'showSessionId', DEFAULT_CONFIG.reply.showSessionId)
+      showSessionId: readBool(replyRaw, 'reply.showSessionId', 'showSessionId', DEFAULT_CONFIG.reply.showSessionId),
+      ack: readBool(replyRaw, 'reply.ack', 'ack', DEFAULT_CONFIG.reply.ack),
+      progressEveryMs: readInt(replyRaw, 'reply.progressEveryMs', 'progressEveryMs', DEFAULT_CONFIG.reply.progressEveryMs, 0),
+      progressMax: readInt(replyRaw, 'reply.progressMax', 'progressMax', DEFAULT_CONFIG.reply.progressMax, 0)
     },
     approval: {
       enabled: readBool(approvalRaw, 'approval.enabled', 'enabled', DEFAULT_CONFIG.approval.enabled),
