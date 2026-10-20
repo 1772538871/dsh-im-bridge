@@ -30,7 +30,7 @@ export const DEFAULT_CONFIG = {
   },
   reply: { maxChunkChars: 1500, errorPrefix: '[bridge] ', showSessionId: false },
   // 只对 inprocess 有意义：把 DSH 的审批请求转发到 IM，超时按拒绝处理（5 分钟）
-  approval: { enabled: true, timeoutMs: 300000 },
+  approval: { enabled: true, timeoutMs: 300000, scope: 'own', chatKey: '' },
   asr: { command: '', args: [], timeoutMs: 60000 },
   log: { dir: '', level: 'info' },
   qqNapcat: { wsUrl: 'ws://127.0.0.1:3001', accessToken: '', reconnectMinMs: 1000, reconnectMaxMs: 30000 },
@@ -352,7 +352,9 @@ export function normalizeConfig(raw, options = {}) {
     approval: {
       enabled: readBool(approvalRaw, 'approval.enabled', 'enabled', DEFAULT_CONFIG.approval.enabled),
       // 低于 10 秒的等待窗口没有意义：用户还没看清问题就已经超时了
-      timeoutMs: readInt(approvalRaw, 'approval.timeoutMs', 'timeoutMs', DEFAULT_CONFIG.approval.timeoutMs, 10000)
+      timeoutMs: readInt(approvalRaw, 'approval.timeoutMs', 'timeoutMs', DEFAULT_CONFIG.approval.timeoutMs, 10000),
+      scope: readText(approvalRaw, 'approval.scope', 'scope', DEFAULT_CONFIG.approval.scope) === 'all' ? 'all' : 'own',
+      chatKey: readText(approvalRaw, 'approval.chatKey', 'chatKey', DEFAULT_CONFIG.approval.chatKey)
     },
     asr: {
       command: readText(asrRaw, 'asr.command', 'command', DEFAULT_CONFIG.asr.command),

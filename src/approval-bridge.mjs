@@ -74,6 +74,10 @@ export function createApprovalBridge({ ctx = null, logger = null, send = null, c
   const enabled = approvalConfig.enabled !== false;
   // 下限（≥10000）在 config-store 里校验，这里只做"能算出正数就用它"的兜底，
   // 免得同一个规则写两遍、两处不一致
+  // own：只认领本插件建的会话（安全默认）；all：连 GUI 里手动开的会话的审批也转发到 QQ
+  const scope = approvalConfig.scope === "all" ? "all" : "own";
+  const explicitChatKey = typeof approvalConfig.chatKey === "string" ? approvalConfig.chatKey.trim() : "";
+  let lastActiveChatKey = "";
   const wanted = Number(approvalConfig.timeoutMs);
   const timeoutMs = Number.isFinite(wanted) && wanted > 0 ? Math.floor(wanted) : DEFAULT_TIMEOUT_MS;
 
@@ -145,9 +149,13 @@ export function createApprovalBridge({ ctx = null, logger = null, send = null, c
     const delegate = typeof next === "function" ? next : () => Promise.resolve("unavailable");
     // 只认领自家 runner 建的 agent；别把设置页/其他插件里的会话也抢过来
     const meta = req && req.agent && typeof req.agent === "object" ? owned.get(req.agent) : undefined;
-    if (!meta) return delegate();
+    const isOwn = meta !== undefined;
+    // 默认只认领自家会话；scope=all 时才接管别人的（发到最近活跃的机器人会话）
+    if (!isOwn && scope !== "all") return delegate();
     if (!enabled) return delegate();
-    const chatKey = typeof meta.chatKey === "string" ? meta.chatKey : "";
+    const chatKey = isOwn
+      ? typeof meta.chatKey === "string" ? meta.chatKey : ""
+      : explicitChatKey !== "" ? explicitChatKey : lastActiveChatKey;
     if (chatKey === "") {
       // 问不到人就别抢：交给默认应答者（无应答者时 fail-closed 成 unavailable）
       diag("warn", "审批请求没有可用的 chatKey，已委托给其他应答者", { toolName: req?.toolName ?? null });
@@ -225,6 +233,8 @@ export function createApprovalBridge({ ctx = null, logger = null, send = null, c
     if (!agent || (typeof agent !== "object" && typeof agent !== "function")) return false;
     const chatKey = typeof meta === "string" ? meta : typeof meta?.chatKey === "string" ? meta.chatKey : "";
     owned.set(agent, { chatKey });
+    // 记下最近活跃的机器人会话：scope=all 时，别的会话的审批就发到这里
+    if (typeof chatKey === "string" && chatKey !== "") lastActiveChatKey = chatKey;
     return true;
   }
 

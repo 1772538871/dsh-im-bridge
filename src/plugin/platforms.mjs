@@ -34,6 +34,8 @@ const COMMON_FIELDS = [
   field('asr.command', '语音转写命令（可留空）', 'text', { placeholder: 'whisper' }),
   field('asr.args', '语音转写参数', 'stringList'),
   field('asr.timeoutMs', '语音转写超时（毫秒）', 'number', { placeholder: '60000' }),
+  field('approval.scope', '审批覆盖范围', 'select', { options: ['own', 'all'], help: 'own=只转发机器人自己会话的审批（安全）；all=连你在网页里手动开的会话也转发到 QQ' }),
+  field('approval.chatKey', '非机器人会话的审批发到哪个会话（留空=最近活跃的那个）', 'text', { placeholder: 'private_<openid>' }),
   field('log.level', '日志级别', 'select', { placeholder: 'info', options: ['debug', 'info', 'warn', 'error'], help: '可选：debug / info / warn / error' }),
   field('dsh.binPath', 'DSH 入口路径（留空自动探测）', 'text', { placeholder: 'E:\\Local\\npm\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js' }),
   field('dsh.profile', 'DSH profile 名', 'text', { required: true, placeholder: 'im-bridge' }),
