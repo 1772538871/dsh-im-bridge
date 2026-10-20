@@ -1,4 +1,9 @@
 import assert from 'node:assert/strict';
+
+// 启动成功类用例必须带白名单：空白名单会被运行时拒绝启动（安全默认）
+function withWhitelist(config) {
+  return Object.assign({}, config, { security: Object.assign({}, config.security, { userWhitelist: ['1001'] }) });
+}
 import { test } from 'node:test';
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -42,7 +47,8 @@ function makeStore(dir) {
 }
 
 function configFor(rootDir, patch = {}) {
-  const config = defaultConfig();
+
+const config = defaultConfig();
   config.storage.rootDir = rootDir;
   return { ...config, ...patch };
 }
@@ -159,7 +165,7 @@ test('config-store: 文件缺失时用默认值、给 warning、保存时自动�
     assert.equal(view.config.platform, 'qq-napcat');
     assert.ok(view.warnings.some((w) => w.includes('配置文件不存在')));
 
-    const saved = await store.save(configFor(join(dir, 'data')));
+    const saved = await store.save(withWhitelist(configFor(join(dir, 'data'))));
     assert.equal(saved.ok, true);
     const onDisk = JSON.parse(await readFile(store.path, 'utf8'));
     assert.equal(onDisk.storage.rootDir, join(dir, 'data'));
@@ -289,7 +295,7 @@ test('POST /config: 合法配置落盘，响应里密钥掩码', async () => {
 test('POST /config: 校验失败时 ok:false + problems，且不落盘', async () => {
   await withDir(async (dir) => {
     const store = makeStore(dir);
-    await store.save(configFor(join(dir, 'data')));
+    await store.save(withWhitelist(configFor(join(dir, 'data'))));
     const before = await readFile(store.path, 'utf8');
 
     const handler = createApiHandler({ configStore: store, runtime: createRuntime({ configStore: store }) });
@@ -390,7 +396,7 @@ test('GET /status: 未运行时形态完整，stats 只有契约里的四个计�
 test('POST /control: start/stop/restart 幂等，running 与 stats 跟着真实运行时走', async () => {
   await withDir(async (dir) => {
     const store = makeStore(dir);
-    await store.save(configFor(join(dir, 'data')));
+    await store.save(withWhitelist(configFor(join(dir, 'data'))));
     const { modules, client } = fakeModules();
     const runtime = createRuntime({ configStore: store, modules });
     const handler = createApiHandler({ configStore: store, runtime });
@@ -430,7 +436,7 @@ test('POST /control: start/stop/restart 幂等，running 与 stats 跟着真实�
 test('POST /control: wechat 明确报"未实现"，qq-official 缺适配器报"尚未就绪"，都不抛', async () => {
   await withDir(async (dir) => {
     const store = makeStore(dir);
-    await store.save(configFor(join(dir, 'data'), { platform: 'wechat' }));
+    await store.save(withWhitelist(configFor(join(dir, 'data'), { platform: 'wechat' })));
     const { modules } = fakeModules();
     const handler = createApiHandler({ configStore: store, runtime: createRuntime({ configStore: store, modules }) });
 
@@ -616,7 +622,7 @@ test('apply: 注册 kind:prefix 路由，卸载时停运行时并注销路由', 
   await withDir(async (dir) => {
     const file = join(dir, 'config.json');
     const store = createConfigStore({ env: { DSH_BOT_CONFIG: file } });
-    await store.save(configFor(join(dir, 'data'), { platform: 'wechat' }));
+    await store.save(withWhitelist(configFor(join(dir, 'data'), { platform: 'wechat' })));
     const webServer = fakeWebServer();
     const ctx = fakeCtx({ webServer });
 
@@ -658,7 +664,7 @@ test('apply: enabled=true 时异步自启，失败只记录 lastError 不抛出'
   await withDir(async (dir) => {
     const file = join(dir, 'config.json');
     const store = createConfigStore({ env: { DSH_BOT_CONFIG: file } });
-    await store.save(configFor(join(dir, 'data'), { enabled: true, platform: 'wechat' }));
+    await store.save(withWhitelist(configFor(join(dir, 'data'), { enabled: true, platform: 'wechat' })));
     const ctx = fakeCtx({ webServer: fakeWebServer() });
 
     const handle = apply(ctx, { env: { DSH_BOT_CONFIG: file } });

@@ -353,6 +353,11 @@ export function normalizeConfig(raw, options = {}) {
     warnings.push('log.dir 落在 C 盘：' + config.log.dir + '，不符合"产线数据不进 C 盘"的规则，建议改到 D:/E: 盘的绝对路径');
   }
 
+  // 安全底线：核心库对空白名单的语义是"不按人管"（放行所有人），插件层必须在这里给出可见警告
+  if (config.security.userWhitelist.length === 0 && config.security.groupWhitelist.length === 0) {
+    warnings.push('白名单为空：启动会被拒绝。至少填写你自己的 QQ 号（security.userWhitelist），否则任何人给机器人发消息都能驱动本机 DSH');
+  }
+
   return { config, problems, warnings };
 }
 

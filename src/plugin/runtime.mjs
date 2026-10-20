@@ -136,6 +136,12 @@ export function createRuntime({ configStore, logger = null, modules = null, now 
       return fail('读取 dsh-bot 配置失败：' + errorText(error));
     }
     const config = view.config;
+    // 空白名单在核心库等于"放行所有人"，启动前必须拦住，否则等于把本机执行权开放给任何能给机器人发消息的人
+    const userWhitelist = config.security && Array.isArray(config.security.userWhitelist) ? config.security.userWhitelist : [];
+    const groupWhitelist = config.security && Array.isArray(config.security.groupWhitelist) ? config.security.groupWhitelist : [];
+    if (userWhitelist.length === 0 && groupWhitelist.length === 0) {
+      return fail('白名单为空：请先填写用户白名单（你自己的 QQ 号）或群白名单，否则任何人都能驱动本机 DSH');
+    }
     if (config.platform === 'wechat') return fail('平台 wechat 未实现');
 
     const adapterModule = PLATFORM_MODULE[config.platform];
