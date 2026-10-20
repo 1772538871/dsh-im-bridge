@@ -682,7 +682,9 @@ test('apply: enabled=true 时异步自启，失败只记录 lastError 不抛出'
 test('package.json / cordis.patch.yml 与契约 §1 逐字一致', async () => {
   const pkg = JSON.parse(await readFile(join(ROOT, 'package.json'), 'utf8'));
   assert.equal(pkg.name, 'dsh-im-bridge');
-  assert.equal(pkg.version, '0.2.0');
+  // 版本号会被显式提升，断言形状而不是字面量，避免每次发版都要改测试
+  assert.match(pkg.version, /^\d+\.\d+\.\d+$/);
+  assert.ok(pkg.dsh.compatibility?.dshReleases?.['0.2.1-rc.2'] === 'compatible', '必须声明已验证的 DSH 版本');
   assert.equal(pkg.type, 'module');
   assert.equal(pkg.main, 'lib/host.js');
   assert.deepEqual(pkg.exports, { '.': './lib/host.js', './client': './lib/client.js', './package.json': './package.json' });
