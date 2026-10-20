@@ -41,6 +41,34 @@ async function loadModelSelectionInstaller(logger) {
   }
 }
 
+/**
+ * 预设（如 liangshen）会在首轮工具调用之后把 wire 呈现从 native 切到 PTC。
+ * 切换后基线 header 变了，新工具会被当成"新增"并统一标记为 deferLoading:true，
+ * 而 addition-only 路由会把旧工具全部剔除 —— 请求里只剩延迟加载的工具，服务端 400。
+ * 修法：切换发生后，下一轮让 agent 开启一条新的声明序列（基线重置为当前工具集）。
+ * 依据：dsh-agent-loop 的 agent/pre-step 决策支持 startsRequestSeries，dsh-goal-round-driver 就是这么用的。
+ */
+export function installSeriesReset(agentCtx, logger = null) {
+  if (!agentCtx || typeof agentCtx.on !== "function") return false;
+  let pending = false;
+  try {
+    agentCtx.on("tools/presentation-changed", () => {
+      pending = true;
+    });
+    agentCtx.on("agent/pre-step", async (payload, next) => {
+      const decision = await next();
+      if (!pending) return decision;
+      pending = false;
+      if (!decision || decision.kind !== "enter") return decision;
+      return { ...decision, startsRequestSeries: true };
+    });
+    return true;
+  } catch (error) {
+    try { logger?.warn?.("注册呈现切换自愈失败（不影响启动）", { error: String(error?.message ?? error).slice(0, 200) }); } catch {}
+    return false;
+  }
+}
+
 export function createInProcessRunner({ ctx = null, config = null, logger = null, bridge = null, now = () => Date.now() } = {}) {
   const dsh = config?.dsh ?? {};
   // sessionId -> { agent, dispose, chatKey, ... }：同一个会话复用同一个 handle，天然续接上下文
@@ -165,6 +193,7 @@ export function createInProcessRunner({ ctx = null, config = null, logger = null
         if (presetId !== "" && presets && typeof presets.mount === "function") {
           await presets.mount(agentCtx, presetId);
         }
+        installSeriesReset(agentCtx, logger);
       }
     };
 
