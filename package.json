@@ -34,7 +34,8 @@
   },
   "scripts": {
     "test": "node --test",
-    "start": "node bin/bridge.mjs"
+    "start": "node bin/bridge.mjs",
+    "selfcheck": "node scripts/selfcheck.mjs"
   },
   "engines": {
     "node": ">=20"
@@ -53,7 +54,8 @@
     "bridge.config.example.json",
     "README.md",
     "CHANGELOG.md",
-    "LICENSE"
+    "LICENSE",
+    "scripts"
   ],
   "keywords": [
     "dsh",

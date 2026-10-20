@@ -14,6 +14,7 @@
 
 - 新行为必须有测试（`node --test`），网络与子进程用注入假件。
 - 提交信息用 Conventional Commits（type + scope，见 `CONTRIBUTING.md`）。
+- 改到清单/配置字段时，跑一次 `node scripts/selfcheck.mjs`，并保证它仍输出 0 FAIL。
 - 改到 DSH 交互面（协议、内部服务、钩子）时，同步更新 `CONTRIBUTING.md` 的升级清单与 `package.json` 的 `dsh.compatibility.dshReleases`。
 - 注释解释"为什么"，不复述代码。
 

@@ -53,11 +53,12 @@ dsh plugin --profile web add E:\Projects\dsh-im-bridge --store-dir <你现有 pn
 
 升级 DSH 之后：
 
-1. `node --test` 全绿；
-2. 重启 `dsh web` → 设置 → dsh bot → 启动；
-3. 给机器人发「你好」，确认 `E:\dsh-im-bridge-data\logs\bridge-*.log` 里有 `网关就绪（READY）` 与回合记录；
-4. `inprocess` 若出问题，把 `dsh.runner` 切回 `sdk`（聊天不受影响，只是没有审批往返）；
-5. 确认无误后把新版本加进 `package.json` 的 `dsh.compatibility.dshReleases`，提交 `chore(compat): …`。
+1. `node scripts/selfcheck.mjs` —— 一条命令验清单 / 设置页 bundle / 配置 / DSH 版本兼容性（FAIL 会以非零退出）；
+2. `node --test` 全绿；
+3. 重启 `dsh web` → 设置 → dsh bot → 启动；
+4. 给机器人发「你好」，确认 `E:\dsh-im-bridge-data\logs\bridge-*.log` 里有 `网关就绪（READY）` 与回合记录；
+5. `inprocess` 若出问题，把 `dsh.runner` 切回 `sdk`（聊天不受影响，只是没有审批往返）；
+6. 确认无误后把新版本加进 `package.json` 的 `dsh.compatibility.dshReleases`，提交 `chore(compat): …`。
 
 ## 目录地图
 
