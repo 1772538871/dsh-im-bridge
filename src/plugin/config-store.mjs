@@ -9,8 +9,9 @@ export const SECRET_FIELDS = ['qqNapcat.accessToken', 'qqOfficial.appSecret'];
 export const SECRET_MASK = '***';
 
 const PERMISSION_MODES = ['read-only', 'workspace-write', 'danger-full-access'];
-// headless=每条消息起一个 dsh 进程（稳，单次 ~5.3s）；sdk=常驻一个进程走 JSON-RPC（~1.2s/轮）
-export const DSH_RUNNERS = ['headless', 'sdk'];
+// headless=每条消息起一个 dsh 进程（稳，单次 ~5.3s）；sdk=常驻一个进程走 JSON-RPC（~1.2s/轮）；
+// inprocess=直接在 DSH 主进程里建 Agent（最快，而且能把审批请求转发到 IM，但依赖 DSH 内部服务）
+export const DSH_RUNNERS = ['headless', 'sdk', 'inprocess'];
 const LOG_LEVELS = ['debug', 'info', 'warn', 'error'];
 
 export const DEFAULT_CONFIG = {
@@ -28,6 +29,8 @@ export const DEFAULT_CONFIG = {
     maxPromptChars: 8000
   },
   reply: { maxChunkChars: 1500, errorPrefix: '[bridge] ', showSessionId: false },
+  // 只对 inprocess 有意义：把 DSH 的审批请求转发到 IM，超时按拒绝处理（5 分钟）
+  approval: { enabled: true, timeoutMs: 300000 },
   asr: { command: '', args: [], timeoutMs: 60000 },
   log: { dir: '', level: 'info' },
   qqNapcat: { wsUrl: 'ws://127.0.0.1:3001', accessToken: '', reconnectMinMs: 1000, reconnectMaxMs: 30000 },
@@ -269,6 +272,7 @@ export function normalizeConfig(raw, options = {}) {
   const storageRaw = section('storage');
   const securityRaw = section('security');
   const replyRaw = section('reply');
+  const approvalRaw = section('approval');
   const asrRaw = section('asr');
   const logRaw = section('log');
   const napcatRaw = section('qqNapcat');
@@ -343,6 +347,11 @@ export function normalizeConfig(raw, options = {}) {
       maxChunkChars: readInt(replyRaw, 'reply.maxChunkChars', 'maxChunkChars', DEFAULT_CONFIG.reply.maxChunkChars, 1),
       errorPrefix: readText(replyRaw, 'reply.errorPrefix', 'errorPrefix', DEFAULT_CONFIG.reply.errorPrefix),
       showSessionId: readBool(replyRaw, 'reply.showSessionId', 'showSessionId', DEFAULT_CONFIG.reply.showSessionId)
+    },
+    approval: {
+      enabled: readBool(approvalRaw, 'approval.enabled', 'enabled', DEFAULT_CONFIG.approval.enabled),
+      // 低于 10 秒的等待窗口没有意义：用户还没看清问题就已经超时了
+      timeoutMs: readInt(approvalRaw, 'approval.timeoutMs', 'timeoutMs', DEFAULT_CONFIG.approval.timeoutMs, 10000)
     },
     asr: {
       command: readText(asrRaw, 'asr.command', 'command', DEFAULT_CONFIG.asr.command),

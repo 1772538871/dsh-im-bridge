@@ -12,6 +12,10 @@ const CORE_MODULES = {
   pipeline: '../pipeline.mjs',
   dsh: '../dsh.mjs',
   sdkRunner: '../sdk-runner.mjs',
+  inprocessRunner: '../inprocess-runner.mjs',
+  approvalBridge: '../approval-bridge.mjs',
+  onebotParse: '../onebot/parse.mjs',
+  onebotSend: '../onebot/send.mjs',
   onebotClient: '../onebot/client.mjs',
   qqbotAdapter: '../qqbot/adapter.mjs'
 };
@@ -25,6 +29,33 @@ function errorText(error) {
 
 function moduleUrl(name) {
   return new URL(CORE_MODULES[name], import.meta.url).href;
+}
+
+/**
+ * 只加一层"当前哪个会话在跑"的记录，串行/排队语义完全交给内核队列。
+ * inprocess 的审批请求要发回触发它的那个会话，而 pipeline 调 runDsh 时不带 chatKey，
+ * 不改 pipeline 逻辑的代价就是在这一层把归属反推回来。
+ */
+function createTrackingSerial(serial, inFlight) {
+  return {
+    run(key, fn) {
+      const name = String(key);
+      return serial.run(name, async () => {
+        inFlight.add(name);
+        try {
+          return await fn();
+        } finally {
+          inFlight.delete(name);
+        }
+      });
+    },
+    pending(key) {
+      return typeof serial.pending === 'function' ? serial.pending(key) : 0;
+    },
+    size() {
+      return typeof serial.size === 'function' ? serial.size() : 0;
+    }
+  };
 }
 
 async function resolveModules(names, injected) {
@@ -70,10 +101,20 @@ export function coreConfigOf(config) {
  * 运行时管理器：同一时刻最多一个实例，start/stop/restart 幂等。
  * modules 是测试注入口（生产走动态 import），避免单测真的去连 WebSocket / 起子进程。
  */
-export function createRuntime({ configStore, logger = null, modules = null, now = () => Date.now() } = {}) {
+export function createRuntime({ configStore, logger = null, modules = null, now = () => Date.now(), ctx = null } = {}) {
   if (!configStore || typeof configStore.read !== 'function') throw new Error('createRuntime: 需要 configStore');
 
-  const state = { running: false, since: null, lastError: null, adapter: null, pipeline: null, logger: null, sdkRunner: null };
+  const state = {
+    running: false,
+    since: null,
+    lastError: null,
+    adapter: null,
+    pipeline: null,
+    logger: null,
+    sdkRunner: null,
+    inprocessRunner: null,
+    approvalBridge: null
+  };
 
   const diag = (level, message, extra) => {
     const target = state.logger && typeof state.logger[level] === 'function' ? state.logger : logger;
@@ -165,7 +206,9 @@ export function createRuntime({ configStore, logger = null, modules = null, now 
 
       const storage = resolved.modules.storage.createStorage({ config: core, logger: runtimeLogger });
       const guard = resolved.modules.security.createGuard({ config: core, logger: runtimeLogger });
-      const serial = resolved.modules.queue.createSerialQueue();
+      // 只有 inprocess 会用到 inFlight / chats，但它的开销是两次 Map 操作，没必要为别的 runner 分叉
+      const jobState = { inFlight: new Set(), chats: new Map(), lastChatKey: null };
+      const serial = createTrackingSerial(resolved.modules.queue.createSerialQueue(), jobState.inFlight);
       const semaphore = resolved.modules.queue.createSemaphore(core.security?.maxConcurrentRuns ?? 2);
       const sessions = resolved.modules.sessions.createSessionStore({
         file: join(core.storage?.rootDir || '.', 'sessions.json'),
@@ -181,9 +224,114 @@ export function createRuntime({ configStore, logger = null, modules = null, now 
       if (!built.ok) return fail(built.error);
       adapter = built.adapter;
 
+      // --- 审批归属所需的辅助函数：只有 inprocess 会用，但 onEvent 的包装层也要同一份 ---
+      // ext.modules 在 inprocess 分支里填（OneBot 的 parse/send 实现），注入式测试可以整体替换
+      const ext = { modules: {} };
+      const sendReplyOf = () => (typeof adapter.deps?.sendReply === 'function' ? adapter.deps.sendReply : ext.modules.onebotSend?.sendReply);
+      const parseInbound = (raw) => {
+        const fn = typeof adapter.deps?.parseEvent === 'function' ? adapter.deps.parseEvent : ext.modules.onebotParse?.parseEvent;
+        if (typeof fn !== 'function') return null;
+        try {
+          return fn(raw);
+        } catch (error) {
+          diag('debug', '解析入站事件失败（只影响审批归属）', { error: errorText(error) });
+          return null;
+        }
+      };
+      const chatKeyFor = (message) => {
+        try {
+          if (typeof adapter.deps?.chatKeyOf === 'function') {
+            const key = adapter.deps.chatKeyOf(message);
+            if (typeof key === 'string' && key !== '') return key;
+          }
+        } catch {
+          // 退回到下面与 pipeline 相同的兜底规则
+        }
+        // 必须和 pipeline.chatKeyOf 的兜底一致，否则 sessions.json 里的键对不上
+        return message?.chatType === 'group' ? 'group_' + (message?.groupId ?? '') : 'private_' + (message?.userId ?? '');
+      };
+      const sendApprovalText = async (chatKey, text) => {
+        const message = jobState.chats.get(chatKey);
+        if (!message) {
+          diag('warn', '审批消息没有可用的对话目标（该会话还没来过消息）', { chatKey });
+          return;
+        }
+        const sendReply = sendReplyOf();
+        if (typeof sendReply !== 'function') {
+          diag('warn', '审批消息发不出去：没有可用的 sendReply', { chatKey });
+          return;
+        }
+        await sendReply({ client: adapter.client, message, text, config: core, logger: runtimeLogger });
+      };
+      const chatKeyForSession = (sessionId) => {
+        if (sessionId === null || sessionId === undefined) return jobState.lastChatKey;
+        try {
+          const all = typeof sessions.all === 'function' ? sessions.all() : {};
+          const hits = Object.keys(all).filter((key) => String(all[key]) === String(sessionId));
+          // sessions.json 的键就是 pipeline 用的 chatKey，反查得到就是权威答案
+          if (hits.length === 1) return hits[0];
+        } catch {
+          // 读不到就往下退
+        }
+        if (jobState.inFlight.size === 1) return Array.from(jobState.inFlight)[0];
+        if (jobState.inFlight.size > 1) {
+          diag('debug', '多个会话同时有任务在跑，审批消息发给最近活跃的会话', { sessionId });
+        }
+        return jobState.lastChatKey;
+      };
+
       // dsh.runner 决定每条消息怎么调 DSH：headless 每条起一个进程，sdk 复用常驻子进程。
       // 默认 headless，切到 sdk 才需要额外握手参数，所以这里只在 sdk 分支建 runner。
       let runDsh = resolved.modules.dsh.runDsh;
+      const startInProcess = async () => {
+        const extra = await resolveModules(['inprocessRunner', 'approvalBridge', 'onebotParse', 'onebotSend'], modules);
+        if (extra.missing.length > 0) {
+          return fail('缺少进程内调用模块：' + extra.missing.map((item) => item.name + '（' + item.error + '）').join('；'));
+        }
+        const createInProcessRunner = extra.modules.inprocessRunner?.createInProcessRunner;
+        const createApprovalBridge = extra.modules.approvalBridge?.createApprovalBridge;
+        if (typeof createInProcessRunner !== 'function') return fail('进程内 runner 尚未就绪');
+        if (!ctx || typeof ctx.get !== 'function') {
+          return fail('inprocess 方式需要 DSH 主进程上下文，但插件没有拿到可用的 ctx（请改用 headless 或 sdk）');
+        }
+
+        // 平台的 parse/send 实现只在这个分支才需要，所以在这里懒填
+        ext.modules = extra.modules;
+
+        const inprocessLogger = typeof runtimeLogger.child === 'function' ? runtimeLogger.child('inprocess') : runtimeLogger;
+        const bridgeLogger = typeof runtimeLogger.child === 'function' ? runtimeLogger.child('approval') : runtimeLogger;
+        if (typeof createApprovalBridge === 'function') {
+          state.approvalBridge = createApprovalBridge({
+            ctx,
+            logger: bridgeLogger,
+            // 桥不认识 QQ：它只把"给这个会话发一段文字"这件事委托出来
+            send: (chatKey, text) => sendApprovalText(chatKey, text),
+            config: core
+          });
+          const attached = state.approvalBridge.attach();
+          if (attached && attached.ok === false && attached.error !== 'approval.disabled') {
+            diag('warn', '审批转发未启用，进程内调用照常但没有 IM 审批', { error: attached.error });
+          }
+        }
+        state.inprocessRunner = createInProcessRunner({
+          ctx,
+          config: core,
+          logger: inprocessLogger,
+          bridge: state.approvalBridge
+        });
+        runDsh = (args = {}) =>
+          state.inprocessRunner.run({
+            prompt: args.prompt ?? '',
+            sessionId: args.sessionId ?? null,
+            // 每条消息都要重新定位归属：会话是首次建立时还不存在 sessions.json 的映射
+            chatKey: chatKeyForSession(args.sessionId ?? null)
+          });
+        runtimeLogger.info('已启用进程内 runner（审批请求转发到 IM）', {
+          approval: state.approvalBridge ? state.approvalBridge.status() : null
+        });
+        return { ok: true };
+      };
+
       if (config.dsh && config.dsh.runner === 'sdk') {
         const createSdkRunner = resolved.modules.sdkRunner?.createSdkRunner;
         if (typeof createSdkRunner !== 'function') return fail('SDK runner 尚未就绪');
@@ -191,6 +339,13 @@ export function createRuntime({ configStore, logger = null, modules = null, now 
         // 懒启动：这里只是建对象，真子进程要等第一条消息进来才 spawn
         state.sdkRunner = createSdkRunner({ config: core, logger: sdkLogger });
         runDsh = (args = {}) => state.sdkRunner.run({ prompt: args.prompt ?? '', sessionId: args.sessionId ?? null });
+      } else if (config.dsh && config.dsh.runner === 'inprocess') {
+        const started = await startInProcess();
+        if (started && started.ok === false) {
+          // 半启动（桥已挂上、runner 没建起来）也要收干净：否则监听器会留在 ctx 上等一个不存在的 runner
+          await stopInProcess({ quiet: true });
+          return started;
+        }
       }
 
       const pipelineLogger = typeof runtimeLogger.child === 'function' ? runtimeLogger.child('pipeline') : runtimeLogger;
@@ -207,11 +362,29 @@ export function createRuntime({ configStore, logger = null, modules = null, now 
         deps: adapter.deps ?? null
       });
 
-      await adapter.start((raw) =>
-        pipeline.handleEvent(raw).catch((error) => {
+      // onEvent 外层再包一层：审批答复必须先被桥看到，命中就只回一句确认，绝不落进 pipeline 当新任务
+      await adapter.start(async (raw) => {
+        if (state.approvalBridge) {
+          try {
+            const parsed = parseInbound(raw);
+            const message = parsed && parsed.kind === 'message' ? parsed.message : null;
+            if (message) {
+              const chatKey = chatKeyFor(message);
+              // 记下每个会话最近一条入站消息：审批消息要能回到同一个会话（含 QQ 官方的回复目标）
+              jobState.chats.set(chatKey, message);
+              jobState.lastChatKey = chatKey;
+              const text = typeof message.text === 'string' ? message.text : '';
+              // 命中就 return：这条是审批答复，不能再当新任务派下去
+              if (state.approvalBridge.handleReply({ chatKey, text })) return;
+            }
+          } catch (error) {
+            diag('debug', '处理审批答复时出错，按普通消息继续', { error: errorText(error) });
+          }
+        }
+        return pipeline.handleEvent(raw).catch((error) => {
           diag('error', 'handleEvent 未捕获异常', { error: errorText(error) });
-        })
-      );
+        });
+      });
 
       state.adapter = adapter;
       state.pipeline = pipeline;
@@ -239,9 +412,33 @@ export function createRuntime({ configStore, logger = null, modules = null, now 
         }
       }
       state.sdkRunner = null;
+      // 半启动的进程内 runner 同样要收：它建的 agent 还占着审批回调与模型额度
+      await stopInProcess({ quiet: true });
       state.running = false;
       state.since = null;
       return fail('启动 dsh-bot 运行时失败：' + errorText(error));
+    }
+  }
+
+  /** 收掉 inprocess 的 runner 与审批桥：先摘监听，再释放 agent，顺序反过来会漏掉"正在等的审批"。 */
+  async function stopInProcess({ quiet = false } = {}) {
+    const approvalBridge = state.approvalBridge;
+    const inprocessRunner = state.inprocessRunner;
+    state.approvalBridge = null;
+    state.inprocessRunner = null;
+    if (approvalBridge && typeof approvalBridge.detach === 'function') {
+      try {
+        approvalBridge.detach();
+      } catch (error) {
+        if (!quiet) diag('warn', '卸载审批桥失败', { error: errorText(error) });
+      }
+    }
+    if (inprocessRunner && typeof inprocessRunner.stop === 'function') {
+      try {
+        await inprocessRunner.stop();
+      } catch (error) {
+        if (!quiet) diag('warn', '停止进程内 runner 失败', { error: errorText(error) });
+      }
     }
   }
 
@@ -261,6 +458,8 @@ export function createRuntime({ configStore, logger = null, modules = null, now 
         diag('warn', '停止平台适配器失败', { error: errorText(error) });
       }
     }
+    // 审批桥先摘：否则 agent 释放时最后几条审批会尝试往已经停掉的适配器发消息
+    await stopInProcess();
     // 先停适配器再停 sdk 子进程：反过来会让收消息和收进程同时进行，日志里全是干扰
     if (sdkRunner && typeof sdkRunner.stop === 'function') {
       try {

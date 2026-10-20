@@ -2,6 +2,15 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，语义化版本。
 
+## [0.4.0] - 2026-10-20
+
+### 新增
+- **进程内执行器（\`dsh.runner=inprocess\`）+ QQ 审批桥**：在 DSH 主进程内建 Agent，把「沙箱升权重试」的审批请求转发到 QQ，按回复放行（\`1\`）/ 拒绝（\`2\`）/ 取消（\`0\`），超时按拒绝处理。
+- 审批应答方以 \`prepend\` 注册，抢在浏览器 GUI 之前；只认领本插件创建的 Agent。
+
+### 变更
+- 文档重构：README 改为落地页（架构图 + 能/不能 + 两条安装路径 + 文档索引），细节拆到 \`docs/install.md\`、\`docs/config.md\`、\`docs/troubleshooting.md\`；内部设计契约移入 \`docs/internal/\`。
+
 ## [0.3.0] - 2026-10-20
 
 ### 新增

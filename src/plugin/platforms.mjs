@@ -41,13 +41,22 @@ const COMMON_FIELDS = [
   field('dsh.timeoutMs', '单次 DSH 调用超时（毫秒）', 'number', { placeholder: '300000' }),
   field(
     'dsh.runner',
-    'DSH 调用方式（headless=每条消息起新进程，稳；sdk=常驻进程，快）',
+    'DSH 调用方式（headless=每条消息起新进程，稳；sdk=常驻进程，快；inprocess=进程内，支持 IM 审批）',
     'select',
     {
-      options: ['headless', 'sdk'],
-      help: 'headless 每条消息约 5.3s；sdk 常驻一条子进程，只有第一轮付冷启动，之后每轮约 1.2s'
+      options: ['headless', 'sdk', 'inprocess'],
+      help:
+        'headless 每条消息约 5.3s；sdk 常驻一条子进程，只有第一轮付冷启动，之后每轮约 1.2s；' +
+        'inprocess 直接用 DSH 主进程建 Agent（最快、可把审批转发到 IM），但依赖 DSH 内部服务名，升级 DSH 时先切回 sdk 验证'
     }
   ),
+  field('approval.enabled', '把审批请求转发到 IM（仅 inprocess 方式）', 'boolean', {
+    help: '只有"沙箱升权重试"这类操作才会触发审批；普通读写和命令不会弹审批'
+  }),
+  field('approval.timeoutMs', '审批等待超时（毫秒，最少 10000）', 'number', {
+    placeholder: '300000',
+    help: '超时按"拒绝"处理（不是取消：取消会让模型立刻重试同一个操作）'
+  }),
   field('dsh.provider', 'SDK 方式的模型供应商', 'text', { placeholder: 'deepseek-official', help: '仅 sdk 方式生效，headless 忽略' }),
   field('dsh.model', 'SDK 方式的模型名', 'text', { placeholder: 'deepseek-flash', help: '仅 sdk 方式生效，headless 忽略' }),
   field('dsh.reasoningEffort', 'SDK 方式的推理强度（留空由模型决定）', 'text', {
