@@ -1,6 +1,6 @@
 {
   "name": "dsh-im-bridge",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "把 QQ 消息（文字/图片/文档/语音）转给本机 DSH 处理并回复的桥接服务，附带 DSH 设置页",
   "type": "module",
   "main": "lib/host.js",
@@ -21,6 +21,11 @@
       "inject": [
         "@deepseek-ai/dsh-client-ui-settings"
       ]
+    },
+    "compatibility": {
+      "dshReleases": {
+        "0.2.1-rc.2": "compatible"
+      }
     }
   },
   "bin": {
@@ -38,5 +43,26 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/1772538871/dsh-im-bridge.git"
-  }
+  },
+  "files": [
+    "lib",
+    "src",
+    "bin",
+    "docs",
+    "cordis.patch.yml",
+    "bridge.config.example.json",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "plugin",
+    "qq",
+    "onebot",
+    "napcat",
+    "qqbot",
+    "chatbot"
+  ]
 }
