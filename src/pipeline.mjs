@@ -216,9 +216,12 @@ export function createPipeline({
     // 需要动手干的活（读文件/整理/分析）比纯问答慢一个量级
     const heavy = /(整理|分析|总结|归纳|阅读|读一下|读完|遍历|批量|全部|每个|扫描|重构|改代码|修\s*bug|写成|生成|导出|翻译|对比)/.test(text);
     let raw = 5 + Math.ceil(chars / 120) + attachments * 20 + (heavy ? 60 : 0);
-    if (recentDurations.length > 0) {
-      const last = recentDurations[recentDurations.length - 1];
-      raw = Math.max(raw, Math.round(last / 1000));
+    // 只用"同类任务"的历史耗时校准：长任务之后紧接着问一句短问题，
+    // 不该也跟着报"几分钟"
+    const sameKind = recentDurations.filter((item) => item.heavy === heavy);
+    if (sameKind.length > 0) {
+      const last = sameKind[sameKind.length - 1];
+      raw = Math.max(raw, Math.round(last.ms / 1000));
     }
     return Math.min(1800, Math.max(5, raw));
   }
@@ -297,6 +300,7 @@ export function createPipeline({
         const prompt = buildPrompt({ config, message, savedAttachments: saved, voiceTranscript });
 
         // 长任务最怕"静默"：先回一条回执，超过阈值再报进度（用主动消息，不占被动回复配额）
+        const heavyTask = /(整理|分析|总结|归纳|阅读|读一下|读完|遍历|批量|全部|每个|扫描|重构|改代码|修\s*bug|写成|生成|导出|翻译|对比)/.test(typeof message?.text === "string" ? message.text : "");
         const ackOn = config?.reply?.ack === true;
         const seconds = estimateSecondsOf(message, saved);
         const everyMs = Number(config?.reply?.progressEveryMs);
@@ -327,7 +331,7 @@ export function createPipeline({
           return;
         } finally {
           if (progressTimer) clearInterval(progressTimer);
-          recentDurations.push(Date.now() - startedAt);
+          recentDurations.push({ ms: Date.now() - startedAt, heavy: heavyTask });
           if (recentDurations.length > 5) recentDurations.shift();
         }
 
