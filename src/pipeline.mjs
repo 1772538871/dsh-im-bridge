@@ -202,18 +202,39 @@ export function createPipeline({
     return { saved, voiceTranscript };
   }
 
-  /** 粗略估个时长：字数、附件数决定模型要读多少东西。宁可给宽一点，也不要让用户干等。 */
+  // 最近几轮的真实耗时：估时用上一次的实际值压着，避免永远报同一个数
+  const recentDurations = [];
+
+  /**
+   * 估个时长。字数/附件反映的是要读多少，真跑多久取决于模型和工具，
+   * 所以这里只用来定量级，再被上一次真实耗时兜底。
+   */
   function estimateSecondsOf(message, saved) {
-    const chars = typeof message?.text === "string" ? message.text.length : 0;
+    const text = typeof message?.text === "string" ? message.text : "";
+    const chars = text.length;
     const attachments = Array.isArray(saved) ? saved.length : 0;
-    const raw = 6 + Math.ceil(chars / 200) + attachments * 3;
-    return Math.min(180, Math.max(5, raw));
+    // 需要动手干的活（读文件/整理/分析）比纯问答慢一个量级
+    const heavy = /(整理|分析|总结|归纳|阅读|读一下|读完|遍历|批量|全部|每个|扫描|重构|改代码|修\s*bug|写成|生成|导出|翻译|对比)/.test(text);
+    let raw = 5 + Math.ceil(chars / 120) + attachments * 20 + (heavy ? 60 : 0);
+    if (recentDurations.length > 0) {
+      const last = recentDurations[recentDurations.length - 1];
+      raw = Math.max(raw, Math.round(last / 1000));
+    }
+    return Math.min(1800, Math.max(5, raw));
+  }
+
+  /** 不给假精确的秒数：按量级说人话，用户才不会盯着数字较真。 */
+  function phraseOfSeconds(seconds) {
+    if (seconds <= 12) return "几秒";
+    if (seconds <= 45) return "半分钟左右";
+    if (seconds <= 150) return "一两分钟";
+    return "几分钟";
   }
 
   function ackTextOf(message, saved, seconds) {
-    const lines = ["收到，开始处理了（预计 " + seconds + " 秒左右）"];
+    const lines = ["收到，开始处理了（预计" + phraseOfSeconds(seconds) + "）"];
     if (Array.isArray(saved) && saved.length > 0) lines.push("· 附件 " + saved.length + " 个已经存好");
-    lines.push(seconds >= 30 ? "这活儿要一会儿，我会隔一阵报个进度" : "干完我把结果发你");
+    lines.push(seconds >= 60 ? "这活儿要一会儿，我会隔一阵报个进度" : "干完我把结果发你");
     return lines.join("\n");
   }
 
@@ -306,6 +327,8 @@ export function createPipeline({
           return;
         } finally {
           if (progressTimer) clearInterval(progressTimer);
+          recentDurations.push(Date.now() - startedAt);
+          if (recentDurations.length > 5) recentDurations.shift();
         }
 
         if (result?.ok) {
