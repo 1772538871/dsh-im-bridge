@@ -422,6 +422,9 @@ export function createRuntime({ configStore, logger = null, modules = null, now 
         semaphore,
         sessions,
         runDsh,
+        // /status 要报"有没有审批/提问挂着"：包一层是因为桥会随启停重建，pipeline 不能抓着旧引用
+        approvalBridge: { pendingCount: () => (state.approvalBridge && typeof state.approvalBridge.pendingCount === 'function' ? state.approvalBridge.pendingCount() : 0) },
+        questionBridge: { pendingCount: () => (state.questionBridge && typeof state.questionBridge.pendingCount === 'function' ? state.questionBridge.pendingCount() : 0) },
         deps: adapter.deps ?? null
       });
 

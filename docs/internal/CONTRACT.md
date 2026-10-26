@@ -104,8 +104,20 @@
 - `export function transcribe({ config, filePath, logger }) -> Promise<{ ok: boolean, text: string, reason: string }>`（`asr.command` 为空 → `{ok:false, reason:'not_configured'}`；有则 spawn，超时 `asr.timeoutMs`，stdout 去空白即转写结果）
 
 ### O. src/pipeline.mjs
-- `export function createPipeline({ config, logger, client, storage, guard, serial, semaphore, sessions, runDsh }) -> { handleEvent(raw) -> Promise<void>, stats(): object }`
-- 流程：`parseEvent` → 非 message 直接返回 → `guard.decide` → 拒绝则 debug 日志返回 → 附件逐个 `planMedia` +`storage` 落地（失败降级成文字说明，不整条失败）→ 语音走 `asr.transcribe` → `sessions.get(chatKey)` → `serial.run(chatKey)` 内 `semaphore.withPermit(() => runDsh(...))` → 成功后 `sessions.set` → `sendReply`；捕获所有异常，错误回复 `reply.errorPrefix + 简短原因`（不得把 stack 发给用户）。
+- `export function createPipeline({ config, logger, client, storage, guard, serial, semaphore, sessions, runDsh, binding, approvalBridge, questionBridge, deps }) -> { handleEvent(raw) -> Promise<void>, stats(): object }`
+  （`binding` / `approvalBridge` / `questionBridge` 可选；前两者不传就用默认实现/不报挂起数）
+- 流程：`parseEvent` → 非 message 直接返回 → `guard.decide` → 拒绝则 debug 日志返回 → 附件逐个 `planMedia` +`storage` 落地（失败降级成文字说明，不整条失败）→ 语音走 `asr.transcribe` → `parseCommand` 命中命令则就地回一句（不进 DSH）→ `serial.run(chatKey)` 内 `sessionBinding.withBinding(chatKey)`（读绑定 → `semaphore.withPermit(() => runDsh(...))` → 写绑定）→ `sendReply`；`result.rebound === true` 只记 warn；捕获所有异常，错误回复 `reply.errorPrefix + 简短原因`（不得把 stack 发给用户）。
+
+### Q. src/session-binding.mjs
+- `export function createSessionBinding({ sessions, logger, now }) -> { withBinding(chatKey, fn) -> Promise<any>, reset(chatKey) -> Promise<{ chatKey, sessionId }>, status() -> { chats, pending, runs, lastWriteAt } }`
+- `fn(scope)` 的 `scope = { chatKey, get() -> Promise<string|null>, set(sessionId) -> Promise<boolean> }`。
+- 同一 chatKey 的绑定事务串行（每个 key 一条 Promise 链，前一个失败也继续），不同 key 互不排队；链尾清空即删键，长跑进程里 Map 不会无限长。
+- 绑定仍存在 `sessions` store（chatKey → sessionId），不新增存储格式；读写异常只降级成 warn 日志。
+
+### R. src/commands.mjs
+- `export function parseCommand(text) -> { name: 'new'|'status'|'export'|'help', args: string } | null`；只认 `/`（或全角 `／`）开头、且首词在 `new/status/export/help` 与 `新会话/状态/导出/帮助` 之内，其余返回 `null`（普通消息不许被抢）。
+- 文案：`commandHelpText({ sessionId })`（≤4 行）、`commandNewSessionText(previousSessionId)`、`commandStatusText({ platform, runner, sessionId, lastDurationMs, approvalPending, questionPending })`（没有挂起就不出现"正在等"那行）、`commandExportDoneText({ path, count })`、`commandExportFailedText(reason)`。
+- 导出：`encodeCwdSegment(cwd)`（`<DSH_HOME>/sessions/--<cwd 编码>--`；`[A-Za-z0-9._-]` 保留、连续分隔符压成一个 `-`、非 ASCII 转 `~XXXX`）、`findSessionLog`（直算不到就扫一遍 sessions 根）、`decodeZstdFrames`（多帧 zstd 按魔数 `28 B5 2F FD` 逐帧解，解不开就把尾巴并到下一帧）、`parseSessionLog`、`buildHistoryMarkdown`、`exportSessionMarkdown({ dshHome, cwd, sessionId, outDir, now })`（失败返回 `{ ok:false, message }`，不抛）。
 
 ### P. bin/bridge.mjs
 - CLI：`--config <path>`、`--check`（只校验+打印摘要+退出，不连 WS）、`--dry-run "<文本>"`（用假 client 走一遍 pipeline，真实调用 dsh）、`--help`。

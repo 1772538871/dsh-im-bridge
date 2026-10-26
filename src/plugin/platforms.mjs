@@ -88,8 +88,8 @@ const COMMON_FIELDS = [
   }),
   field('dsh.agentPreset', '用哪个人格预设（决定它的说话风格和能用的工具，留空=不挂预设）', 'text', { placeholder: 'liangshen' }),
   field('dsh.cwd', '它干活的文件夹（留空用 <数据目录>/workspace，它只能改这里面的东西）', 'text'),
-  field('dsh.releaseOnIdle', '每轮结束后释放会话（不放网页里点开会是空白）', 'boolean'),
-  field('dsh.newSessionPerMessage', '每条消息都开新会话（上下文不连续，但绝不会撞占用）', 'boolean'),
+  field('dsh.releaseOnIdle', '每轮结束后释放会话（关掉时网页里点开这条会话可能读不到历史）', 'boolean'),
+  field('dsh.newSessionPerMessage', '调试开关：每条消息都开新会话（上下文不连续，正常别开）', 'boolean'),
   field('dsh.timeoutMs', '一个问题最多等多久（毫秒，超了就放弃）', 'number', { placeholder: '300000' }),
   field('dsh.runner', '干活方式：inprocess=最快且能在 QQ 里审批；sdk=稳；headless=最保守', 'select', {
     options: ['headless', 'sdk', 'inprocess'],

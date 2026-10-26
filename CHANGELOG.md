@@ -2,6 +2,19 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，语义化版本。
 
+## [0.5.0] - 2026-10-23
+
+### 新增
+- **会话绑定 + 锁（`src/session-binding.mjs`）**：同一个 chatKey 的"读绑定 → 跑一轮 → 写绑定"整段串行。两条并发消息不再各读到一个空绑定、各建一个会话（上下文分叉 + 同时占住写句柄）。
+- **写句柄冲突改成退避重试链**：同一会话先按 200 / 600 / 1200ms 重试三次，仍抢不到才换新会话；结果带 `rebound: true`，日志里带 `reboundFrom`。原来的"释放一次重试一次"只是这条链的第一步。
+- **QQ 里的命令系统（`src/commands.mjs`）**：`/new`、`/status`、`/export`、`/help`，各有中文同义词 `/新会话`、`/状态`、`/导出`、`/帮助`；命令不进 DSH、不占并发名额、不产生会话。
+- **`/export`**：把当前会话导成 markdown（多帧 zstd 逐帧解，只取 `user/message` 与 `assistant/message` 的文字块），落到 `<storage.rootDir>/history/<会话 id>-<yyyyMMdd-HHmmss>.md`，回绝对路径 + 条数。
+
+### 变更
+- `dsh.newSessionPerMessage` 降级为**调试开关**（默认 `false`）：躲写句柄占用不再靠它。
+- `dsh.releaseOnIdle` 语义不变（默认 `false`），文档改为说清"关掉时网页里点开可能读不到历史"。
+- `createPipeline` 新增可选 `binding` / `approvalBridge` / `questionBridge`（`/status` 要报审批与提问的挂起数）。
+
 ## [0.4.1] - 2026-10-20
 
 ### 修复

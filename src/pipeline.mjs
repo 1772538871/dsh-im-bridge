@@ -1,6 +1,18 @@
+import { join } from 'node:path';
 import { transcribe as defaultTranscribe } from "./asr.mjs";
+import {
+  commandExportDoneText,
+  commandExportFailedText,
+  commandHelpText,
+  commandNewSessionText,
+  commandStatusText,
+  defaultDshHome,
+  exportSessionMarkdown,
+  parseCommand,
+} from './commands.mjs';
 import { formatForQq } from './format.mjs';
 import { buildPrompt } from "./prompt.mjs";
+import { createSessionBinding } from './session-binding.mjs';
 
 const DEFAULT_ERROR_PREFIX = "[bridge] ";
 
@@ -95,6 +107,9 @@ export function createPipeline({
   semaphore,
   sessions,
   runDsh,
+  binding = null,
+  approvalBridge = null,
+  questionBridge = null,
   deps = null,
 } = {}) {
   if (typeof runDsh !== "function") throw new Error("createPipeline: runDsh 必填");
@@ -103,6 +118,8 @@ export function createPipeline({
 
   const counters = { received: 0, handled: 0, failed: 0, denied: 0, ignored: 0, parseErrors: 0 };
   let depsPromise = null;
+  // 会话绑定事务的锁：并发消息不能同时读到同一个空绑定
+  const sessionBinding = binding ?? createSessionBinding({ sessions, logger });
 
   const resolveDeps = () => {
     const injected = deps ?? {};
@@ -251,6 +268,77 @@ export function createPipeline({
     }
   }
 
+  function platformOf() {
+    const platform = typeof config?.platform === 'string' ? config.platform : '';
+    // 命令行模式（bin/bridge.mjs）没有 platform 字段：那条路只有 OneBot 一种走法
+    return platform === '' ? 'onebot' : platform;
+  }
+
+  function runnerOf() {
+    const runner = config?.dsh?.runner;
+    return typeof runner === 'string' && runner !== '' ? runner : 'headless';
+  }
+
+  function historyDir() {
+    const fromStorage = typeof storage?.rootDir === 'string' && storage.rootDir !== '' ? storage.rootDir : '';
+    const rootDir = fromStorage !== '' ? fromStorage : config?.storage?.rootDir;
+    return typeof rootDir === 'string' && rootDir !== '' ? join(rootDir, 'history') : '';
+  }
+
+  function pendingCountOf(bridgeService) {
+    try {
+      if (typeof bridgeService?.pendingCount === 'function') return Number(bridgeService.pendingCount()) || 0;
+      if (typeof bridgeService?.status === 'function') return Number(bridgeService.status()?.pending ?? 0) || 0;
+    } catch {
+      // 桥没挂上就当没有挂起：状态命令不该因为读桥而失败
+    }
+    return 0;
+  }
+
+  function lastDurationMs() {
+    return recentDurations.length === 0 ? null : recentDurations[recentDurations.length - 1].ms;
+  }
+
+  /** 命令不进 DSH：就地回一句，不占并发额度、也不产生一轮对话。 */
+  async function handleCommand({ command, message, chatKey }) {
+    if (command.name === 'help') {
+      await deliver(message, commandHelpText({ sessionId: await readSession(chatKey) }));
+      return;
+    }
+    if (command.name === 'new') {
+      // reset 排在正在跑的那一轮后面，所以这里的"下一条消息开始生效"是真的
+      const cleared = await sessionBinding.reset(chatKey);
+      logger?.info?.('收到 /new，已清空会话绑定', { chatKey, previousSessionId: cleared.sessionId });
+      await deliver(message, commandNewSessionText(cleared.sessionId));
+      return;
+    }
+    if (command.name === 'status') {
+      await deliver(
+        message,
+        commandStatusText({
+          platform: platformOf(),
+          runner: runnerOf(),
+          sessionId: await readSession(chatKey),
+          lastDurationMs: lastDurationMs(),
+          approvalPending: pendingCountOf(approvalBridge),
+          questionPending: pendingCountOf(questionBridge),
+        }),
+      );
+      return;
+    }
+    if (command.name === 'export') {
+      const outcome = await exportSessionMarkdown({
+        dshHome: defaultDshHome(),
+        cwd: typeof config?.dsh?.cwd === 'string' ? config.dsh.cwd : '',
+        sessionId: await readSession(chatKey),
+        outDir: historyDir(),
+      });
+      if (outcome.ok) logger?.info?.('会话已导出', { chatKey, path: outcome.path, count: outcome.count });
+      else logger?.warn?.('导出会话失败', { chatKey, reason: outcome.message });
+      await deliver(message, outcome.ok ? commandExportDoneText(outcome) : commandExportFailedText(outcome.message));
+    }
+  }
+
   async function handleEvent(raw) {
     let resolved;
     try {
@@ -292,68 +380,77 @@ export function createPipeline({
       const { saved, voiceTranscript } = await landAttachments({ message, raw, resolved });
 
       await serial.run(chatKey, async () => {
-        // 会话 id 必须在串行体内读：排在后面的消息要用前一条刚落盘的新 id
-        // 每条消息都开新会话：不读也不写映射表。好处是永远不撞"写句柄被占用"，
-        // 代价是跨消息没有上下文（用户明确要这个行为时才开）
-        const freshEveryTime = config?.dsh?.newSessionPerMessage === true;
-        const sessionId = freshEveryTime ? null : await readSession(chatKey);
-        const prompt = buildPrompt({ config, message, savedAttachments: saved, voiceTranscript });
-
-        // 长任务最怕"静默"：先回一条回执，超过阈值再报进度（用主动消息，不占被动回复配额）
-        const heavyTask = /(整理|分析|总结|归纳|阅读|读一下|读完|遍历|批量|全部|每个|扫描|重构|改代码|修\s*bug|写成|生成|导出|翻译|对比)/.test(typeof message?.text === "string" ? message.text : "");
-        const ackOn = config?.reply?.ack === true;
-        const seconds = estimateSecondsOf(message, saved);
-        const everyMs = Number(config?.reply?.progressEveryMs);
-        const progressEvery = Number.isFinite(everyMs) && everyMs >= 10000 ? Math.floor(everyMs) : 45000;
-        const maxRaw = Number(config?.reply?.progressMax);
-        const progressMax = Number.isFinite(maxRaw) && maxRaw >= 0 ? Math.floor(maxRaw) : 2;
-        if (ackOn) await deliver(message, ackTextOf(message, saved, seconds));
-        const startedAt = Date.now();
-        let progressTimer = null;
-        let progressSent = 0;
-        if (ackOn && progressEvery > 0 && progressMax > 0) {
-          progressTimer = setInterval(() => {
-            if (progressSent >= progressMax) return;
-            progressSent += 1;
-            const used = Math.round((Date.now() - startedAt) / 1000);
-            void deliver({ ...message, messageId: "" }, "还在处理：已用 " + used + " 秒" + (progressSent < progressMax ? "，完了我立刻发结果" : "，快好了"));
-          }, progressEvery);
-          progressTimer.unref?.();
-        }
-
-        let result;
-        try {
-          result = await semaphore.withPermit(() => runDsh({ config, prompt, sessionId, logger }));
-        } catch (error) {
-          counters.failed += 1;
-          logger?.error?.("runDsh 抛错", { chatKey, error: String(error?.message ?? error) });
-          await deliver(message, `${errorPrefix}调用 DSH 失败，这次没有结果。`);
+        const command = parseCommand(typeof message?.text === 'string' ? message.text : '');
+        if (command !== null) {
+          await handleCommand({ command, message, chatKey });
           return;
-        } finally {
-          if (progressTimer) clearInterval(progressTimer);
-          recentDurations.push({ ms: Date.now() - startedAt, heavy: heavyTask });
-          if (recentDurations.length > 5) recentDurations.shift();
         }
 
-        if (result?.ok) {
-          if (!freshEveryTime && result.sessionId && result.sessionId !== sessionId) {
-            try {
-              await sessions?.set?.(chatKey, result.sessionId);
-            } catch (error) {
-              logger?.warn?.("写会话映射失败", { chatKey, error: String(error?.message ?? error) });
-            }
+        // "读绑定 → 跑 → 写绑定"整段进锁：两条并发消息同时读到空绑定会各建一个会话，
+        // 后写的把先写的覆盖掉，还会同时占住同一份写句柄（网页里点开就是空白）
+        await sessionBinding.withBinding(chatKey, async (scope) => {
+          // 会话 id 必须在锁里读：排在后面的消息要用前一条刚落盘的新 id
+          // newSessionPerMessage 只是调试开关：永远不撞写句柄，代价是跨消息没有上下文
+          const freshEveryTime = config?.dsh?.newSessionPerMessage === true;
+          const sessionId = freshEveryTime ? null : await scope.get();
+          const prompt = buildPrompt({ config, message, savedAttachments: saved, voiceTranscript });
+
+          // 长任务最怕"静默"：先回一条回执，超过阈值再报进度（用主动消息，不占被动回复配额）
+          const heavyTask = /(整理|分析|总结|归纳|阅读|读一下|读完|遍历|批量|全部|每个|扫描|重构|改代码|修\s*bug|写成|生成|导出|翻译|对比)/.test(typeof message?.text === "string" ? message.text : "");
+          const ackOn = config?.reply?.ack === true;
+          const seconds = estimateSecondsOf(message, saved);
+          const everyMs = Number(config?.reply?.progressEveryMs);
+          const progressEvery = Number.isFinite(everyMs) && everyMs >= 10000 ? Math.floor(everyMs) : 45000;
+          const maxRaw = Number(config?.reply?.progressMax);
+          const progressMax = Number.isFinite(maxRaw) && maxRaw >= 0 ? Math.floor(maxRaw) : 2;
+          if (ackOn) await deliver(message, ackTextOf(message, saved, seconds));
+          const startedAt = Date.now();
+          let progressTimer = null;
+          let progressSent = 0;
+          if (ackOn && progressEvery > 0 && progressMax > 0) {
+            progressTimer = setInterval(() => {
+              if (progressSent >= progressMax) return;
+              progressSent += 1;
+              const used = Math.round((Date.now() - startedAt) / 1000);
+              void deliver({ ...message, messageId: "" }, "还在处理：已用 " + used + " 秒" + (progressSent < progressMax ? "，完了我立刻发结果" : "，快好了"));
+            }, progressEvery);
+            progressTimer.unref?.();
           }
-          let text = typeof result.text === "string" ? result.text.trim() : "";
-          if (text === "") text = "（DSH 这次没有返回文字内容）";
-          if (config?.reply?.showSessionId && result.sessionId) text += `\n[session ${result.sessionId}]`;
-          await deliver(message, text);
-          counters.handled += 1;
-          return;
-        }
 
-        counters.failed += 1;
-        logger?.warn?.("DSH 调用失败", { chatKey, reason: result?.reason, exitCode: result?.exitCode });
-        await deliver(message, `${errorPrefix}${failureText(result?.reason, result)}`);
+          let result;
+          try {
+            result = await semaphore.withPermit(() => runDsh({ config, prompt, sessionId, logger }));
+          } catch (error) {
+            counters.failed += 1;
+            logger?.error?.("runDsh 抛错", { chatKey, error: String(error?.message ?? error) });
+            await deliver(message, `${errorPrefix}调用 DSH 失败，这次没有结果。`);
+            return;
+          } finally {
+            if (progressTimer) clearInterval(progressTimer);
+            recentDurations.push({ ms: Date.now() - startedAt, heavy: heavyTask });
+            if (recentDurations.length > 5) recentDurations.shift();
+          }
+
+          if (result?.ok) {
+            if (!freshEveryTime && result.sessionId && result.sessionId !== sessionId) {
+              await scope.set(result.sessionId);
+            }
+            // 换新会话是兜底成功、不是故障：只记日志，用户不必知道上下文断了一次
+            if (result.rebound === true) {
+              logger?.warn?.("会话写句柄一直被占用，已换新会话继续", { chatKey, sessionId: result.sessionId });
+            }
+            let text = typeof result.text === "string" ? result.text.trim() : "";
+            if (text === "") text = "（DSH 这次没有返回文字内容）";
+            if (config?.reply?.showSessionId && result.sessionId) text += `\n[session ${result.sessionId}]`;
+            await deliver(message, text);
+            counters.handled += 1;
+            return;
+          }
+
+          counters.failed += 1;
+          logger?.warn?.("DSH 调用失败", { chatKey, reason: result?.reason, exitCode: result?.exitCode });
+          await deliver(message, `${errorPrefix}${failureText(result?.reason, result)}`);
+        });
       });
     } catch (error) {
       counters.failed += 1;

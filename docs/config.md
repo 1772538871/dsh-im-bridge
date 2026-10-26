@@ -80,6 +80,8 @@
 | `nodePath` | 跑 DSH 的 node；空=当前进程 | `""` |
 | `agentPreset` | 用哪个人格预设（决定说话风格和能用的工具）；空=不挂预设 | `""` |
 | `cwd` | 它干活的文件夹（它能改的范围）；空= `<rootDir>/workspace` | `""` |
+| `releaseOnIdle` | 每轮结束就把会话的写句柄放掉。关着（默认）时网页里点开这条会话可能读不到历史；想要"网页随时能看"就打开 | `false` |
+| `newSessionPerMessage` | **调试开关**：每条消息都开新会话，上下文不连续。正常别开——抢写句柄已经由"退避重试 → 仍不通才换新会话"兜住 | `false` |
 | `timeoutMs` | 一个问题最多等多久，超了就放弃 | `300000` |
 | `permissionMode` | 传给子进程的 `DSH_PERMISSION_MODE`；**不允许 `danger-full-access`**（配置校验会直接拒） | `workspace-write` |
 | `provider` / `model` / `reasoningEffort` | 只有 `sdk` / `inprocess` 用得上，握手时传给 DSH | `deepseek-official` / `deepseek-flash` / `high` |
@@ -104,6 +106,21 @@
 等多久复用 `approval.timeoutMs`（默认 5 分钟）：只该记一个"它会等我多久"的数字。
 
 回法：`1/2/3…` 选对应选项（多选题可以写 `1,3`）、直接说话当作自由回答、回「跳过」跳过一题。超时、被取消、或同一个会话里已经有另一条在等，都按**跳过**收场——跳过只是"这一问没人答"，模型还能接着说；报错会让整轮工具调用直接失败。
+
+### 命令 · 在 QQ 里直接发（不进 DSH）
+
+| 命令 | 中文同义词 | 一句人话 |
+| --- | --- | --- |
+| `/new` | `/新会话` | 开一个新会话；绑定清掉后**下一条消息**才生效 |
+| `/status` | `/状态` | 平台、跑法、会话编号前 8 位、上一轮耗时；有审批/提问挂着才多一行 |
+| `/export` | `/导出` | 把当前会话导出成 markdown，回你绝对路径 + 条数 |
+| `/help` | `/帮助` | 上面这张表 |
+
+命令必须**以 `/` 开头**（`我在 /new 你` 不算命令，照常问 DSH）；大小写都认，全角 `／` 也认。命令不进 DSH、不占并发额度、也不产生一轮对话。
+
+`/export` 读的是 DSH 自己的会话日志：`<DSH_HOME>/sessions/--<工作目录编码>--/<会话 id>/session.v4.jsonl.zstd`。
+这个文件是**多帧 zstd**（每次 append 一帧），逐帧解完只取 `user/message` 与 `assistant/message` 的文字块，
+落到 `<storage.rootDir>/history/<会话 id>-<yyyyMMdd-HHmmss>.md`。找不到文件、解不出内容都只会回一句人话，不会抛。
 
 ### qqNapcat / qqOfficial · 平台专属的剩下几项
 

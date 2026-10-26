@@ -8,6 +8,9 @@ const DEFAULT_TIMEOUT_MS = 300000;
 // 见到"一条新事件都没有"就隔一小会儿再问一次，避免把空结果当成答案。
 const IDLE_RECHECK_TIMES = 3;
 const IDLE_RECHECK_MS = 25;
+// 写句柄被别处占着（网页里开着这条会话）时，抢的次数与间隔：网页多半只是短暂占用，
+// 退避重试比立刻换新会话划算得多——换了就等于丢了上下文。
+export const CONFLICT_RETRY_DELAYS_MS = [200, 600, 1200];
 
 function errorText(error) {
   return error && error.message ? String(error.message) : String(error);
@@ -69,8 +72,19 @@ export function installSeriesReset(agentCtx, logger = null) {
   }
 }
 
-export function createInProcessRunner({ ctx = null, config = null, logger = null, bridge = null, now = () => Date.now() } = {}) {
+export function createInProcessRunner({
+  ctx = null,
+  config = null,
+  logger = null,
+  bridge = null,
+  now = () => Date.now(),
+  retryDelaysMs = CONFLICT_RETRY_DELAYS_MS
+} = {}) {
   const dsh = config?.dsh ?? {};
+  // 退避间隔可注入：真机上要几百毫秒起步，测试里不能陪它等两秒
+  const conflicts = (Array.isArray(retryDelaysMs) ? retryDelaysMs : CONFLICT_RETRY_DELAYS_MS).filter(
+    (ms) => Number.isFinite(ms) && ms >= 0
+  );
   // 一轮结束后是否立刻释放会话（释放写句柄）：
   // 不释放的话，网页里点开这条会话拿不到写句柄，历史永远是空白 —— 这是"网页空白"的真因。
   const releaseOnIdle = dsh.releaseOnIdle === true;
@@ -249,29 +263,43 @@ export function createInProcessRunner({ ctx = null, config = null, logger = null
     };
 
     let handle;
+    let reboundFrom = null;
     try {
       handle = await agents.create(options);
     } catch (error) {
       const firstText = errorText(error);
       if (/active write handle/i.test(firstText)) {
-        // 这条会话的写句柄被别处占着（典型：你在网页里把它打开了）。先清掉本进程的残留，再试一次；
-        // 还不行就换一个新会话继续——答案比"续上旧历史"重要，旧历史仍留在磁盘上。
+        // 写句柄被别处占着：网页里打开过这条会话就会这样（网页读历史同样要写句柄）。
+        // 先清掉本进程的残留句柄，再按 200/600/1200ms 退避重试——网页那边多半只是短暂占用，
+        // 换个新会话就等于把上下文丢了，能用重试换回来的就别换。
         const stale = handles.get(sessionId);
         if (stale) {
           handles.delete(sessionId);
-          try { await stale.dispose?.(); } catch { /* 释放失败不影响后面换新会话 */ }
+          try { await stale.dispose?.(); } catch { /* 释放失败不影响重试 */ }
         }
-        await new Promise((resolve) => setTimeout(resolve, 150));
-        try {
-          handle = await agents.create(options);
-        } catch (again) {
+        let lastText = firstText;
+        for (let i = 0; i < conflicts.length && !handle; i += 1) {
+          await delay(conflicts[i]);
+          try {
+            handle = await agents.create(options);
+            diag("info", "写句柄已释放，退避重试拿到会话", { sessionId, attempt: i + 1, waitedMs: conflicts[i] });
+          } catch (again) {
+            lastText = errorText(again);
+            if (!/active write handle/i.test(lastText)) throw again;
+            diag("debug", "写句柄仍被占用，继续退避", { sessionId, attempt: i + 1, waitedMs: conflicts[i] });
+          }
+        }
+        if (!handle) {
+          // 退避用尽还是抢不到：换新会话继续。答案比"续上旧历史"重要，旧历史仍在磁盘上。
           const fresh = "session-" + randomUUID();
-          diag("warn", "会话写句柄被别处占用（网页里打开过？），改用新会话继续", {
-            oldSessionId: sessionId,
+          diag("warn", "会话写句柄一直被占用（网页里打开着？），改用新会话继续", {
+            reboundFrom: sessionId,
             newSessionId: fresh,
-            error: errorText(again).slice(0, 200)
+            attempts: conflicts.length,
+            error: lastText.slice(0, 200)
           });
           handle = await agents.create({ ...options, sessionId: fresh });
+          reboundFrom = sessionId;
           sessionId = fresh;
         }
       } else if (/already|exist|duplicate|opening/i.test(firstText) && typeof agents.resume === "function") {
@@ -316,7 +344,7 @@ export function createInProcessRunner({ ctx = null, config = null, logger = null
       model: record.model ?? null
     });
     diag("info", "进程内建了一个 Agent", { sessionId, chatKey: record.chatKey || null, created: state.created });
-    return { record };
+    return { record, reboundFrom };
   }
 
   async function ensureHandle(sessionId, chatKey) {
@@ -450,8 +478,18 @@ export function createInProcessRunner({ ctx = null, config = null, logger = null
           ? dsh.timeoutMs
           : DEFAULT_TIMEOUT_MS;
 
+    // 本轮是否换了新会话（旧会话被别处占着）：要让调用方把新 id 写回绑定，也要在结果里说清楚
+    let reboundFrom = null;
     const finish = (reason, { text = "", echoId = sid, extra = {} } = {}) => {
-      const result = { ok: reason === "ok", text, sessionId: echoId, reason, durationMs: now() - startedAt, ...extra };
+      const result = {
+        ok: reason === "ok",
+        text,
+        sessionId: echoId,
+        reason,
+        durationMs: now() - startedAt,
+        ...(reboundFrom === null ? {} : { rebound: true }),
+        ...extra
+      };
       if (result.ok) diag("debug", "inprocess 调用成功", { durationMs: result.durationMs });
       else
         diag("warn", "inprocess 调用失败", {
@@ -482,6 +520,7 @@ export function createInProcessRunner({ ctx = null, config = null, logger = null
       if (opened.error) return finish(opened.error, { echoId: givenId });
       openedHandle = true;
       const record = opened.record;
+      if (typeof opened.reboundFrom === "string" && opened.reboundFrom !== "") reboundFrom = opened.reboundFrom;
       if (typeof record.sessionId === "string" && record.sessionId !== sid) {
         diag("warn", "本轮改用新会话", { from: sid, to: record.sessionId });
         sid = record.sessionId;
