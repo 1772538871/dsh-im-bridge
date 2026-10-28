@@ -108,8 +108,8 @@ test('platformCards: 每个平台一张卡片，选中项带高亮标记与图�
   assert.equal(picked.length, 1, '只能有一张选中');
   assert.equal(picked[0].id, 'qq-official');
   assert.equal(cards[0].label, 'QQ（NapCat / OneBot）', '名称原样来自 /platforms');
-  assert.equal(cards[0].icon, '🐧');
-  assert.equal(cards[1].icon, '🤖');
+  assert.equal(cards[0].icon, 'qq');
+  assert.equal(cards[1].icon, 'robot');
 });
 
 test('platformCards: 未开放的 wechat 是禁用态并标注「即将支持」', () => {
@@ -272,10 +272,10 @@ test('describeBindingCard: 官方平台显示「QQ 机器人」，头像用平�
   const { describeBindingCard } = loadClient();
   const official = describeBindingCard({ running: true }, { platform: 'qq-official' });
   assert.equal(official.name, 'QQ 机器人');
-  assert.equal(official.avatar, '🤖');
+  assert.equal(official.avatar, 'robot');
   const napcat = describeBindingCard({ running: true }, { platform: 'qq-napcat' });
   assert.equal(napcat.name, 'NapCat 机器人');
-  assert.equal(napcat.avatar, '🐧');
+  assert.equal(napcat.avatar, 'qq');
 });
 
 // ---------------- 4. 响应式两栏 ----------------

@@ -2,6 +2,13 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，语义化版本。
 
+## [0.9.3] - 2026-10-23
+
+### 变更
+- **平台图标换成内联 SVG**（企鹅 / 机器人 / 双气泡），跟着主题色走（`currentColor`），不再依赖系统 emoji 字体：
+  部分 Windows 上 emoji 渲染成黑白方块或大小不一，换成矢量后在任何主题下都清晰一致。
+- 图标用元素树渲染（不是 `dangerouslySetInnerHTML`），与二维码注入路径隔离，测试断言按 token（`qq` / `robot` / `chat`）。
+
 ## [0.9.2] - 2026-10-23
 
 ### 修复
