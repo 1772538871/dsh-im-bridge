@@ -49,3 +49,61 @@ NapCat 配置里找 **网络配置 → OneBot 11 → WebSocket 服务器**（正
 - **401/连上就断**：token 不一致；注意桥接是把 token 拼在 URL 上（`?access_token=`）。
 - **收不到群消息**：QQ 侧开了「接收群消息但需要 @」之类的客户端设置，或者 `groupRequireAt` 与发送方式不匹配。
 - **被风控**：机器人号频繁群发、加太多好友会触发风控，这是账号风险不是本项目风险。
+
+
+## 7. 用 SnowLuma 代替 NapCat（个人号方案）
+
+SnowLuma 和 NapCat 是同一层东西——**跑在本机的 QQ 互操作运行时**，把 QQ 翻译成 OneBot v11。选一个装就行，**别同时跑**（会重复收消息、重复回复）。
+
+| | NapCat | SnowLuma |
+| --- | --- | --- |
+| 形态 | 注入 NTQQ | 注入 NTQQ |
+| 输出 | OneBot 11（HTTP + 正向/反向 WS） | OneBot 11（HTTP `3000` + 正向 WS `3001`） |
+| 安装 | 安装器 + 配置面板 | 下载 zip 解压 + `launcher.bat` |
+| 前置 | 官方 QQNT 已登录 | 官方 QQNT 已登录；**路径不能有中文和空格** |
+
+### 7.1 步骤
+
+1. 装官方 **NTQQ** 客户端（不是旧版 QQ、不是 TIM），登录一次你那**小号**。
+2. 去 [SnowLuma Releases](https://github.com/SnowLuma/SnowLuma/releases) 下 `SnowLuma-v<版本>-win-x64.zip`（**完整版内置 node**；带 `-lite` 的要 Node ^24.22.1）。
+3. 解压到**无中文、无空格**的目录，双击 `launcher.bat` 启动。
+4. 首次启动后用手机 QQ 扫码登录那个小号。
+5. 在 SnowLuma 里开 OneBot v11：
+   | 项 | 值 |
+   | --- | --- |
+   | HTTP | `127.0.0.1:3000` |
+   | 正向 WS | `127.0.0.1:3001` |
+   | accessToken | 自己编一串，待会填到插件里 |
+6. 回到 **DSH → 设置 → dsh bot**：平台选「**QQ（NapCat / OneBot）**」，`WebSocket 地址` 填 `ws://127.0.0.1:3001`，`accessToken` 填同一串，保存 → 启动。
+7. 用白名单里的号给小号发一句「你好」；群聊里 @ 一下小号（默认 `groupRequireAt: true`）。
+
+### 7.2 风险（必须知道）
+
+SnowLuma 与 NapCat 都是**注入式协议端**，违反 QQ 用户协议，**存在封号风险**。
+
+- **只用小号**，别用主号；
+- 别做群发、别频繁加好友、别在深夜持续说话；
+- 想要零风险就回官方机器人（`platform = qq-official`）。
+
+## 8. 排障表（症状 → 原因 → 处理）
+
+| 症状 | 最可能的原因 | 怎么处理 |
+| --- | --- | --- |
+| 插件启动后立刻报连接失败 | OneBot 服务没开 / 端口不对 | 看 NapCat 或 SnowLuma 日志里有没有 `listening on 3001`；端口填错最常见 |
+| 连上就断、或 401 | accessToken 不一致 | 两边必须逐字相同；注意桥接是把 token 拼在 URL 上（`?access_token=`） |
+| 只能看到心跳、收不到消息 | 只开了 HTTP，没开**正向 WS** 事件推送 | 把 WS 打开，并确认端口和插件里一致 |
+| 报 426 Upgrade Required | 把 WS 端口填成了 `http://` | 插件里 `wsUrl` 必须是 `ws://127.0.0.1:3001` |
+| 私聊不回 | `security.allowPrivate` 关了，或**白名单空**（空 = 拒绝启动/拒绝服务） | 设置页确认开关与白名单；日志里会有 `denied` 与 openid |
+| 群聊不回 | 没 @ 机器人（`groupRequireAt: true`），或 `allowGroup` 关了 | 在群里 @ 一次；或把 `groupRequireAt` 关掉 |
+| 每条消息回两次 | 同时跑了两套（插件 + qq-bridge，或两个 SnowLuma 实例） | 只留一套；插件日志里会出现重复的 `run start` |
+| 文件/图片发不出去 | QQ 官方侧要用 `file_info` 上传后发送；OneBot 侧看上传接口权限 | 先看 `logs\bridge-YYYY-MM-DD.log` 里的错误码；QQ 官方侧字段可能要按平台文档微调 |
+| 重启电脑后机器人不响 | 协议端没自启，或登录态失效 | 让 NapCat/SnowLuma 开机自启，并重新扫码登录 |
+| 语音消息听不懂 | `asr.command` 没配（默认只落盘给路径） | 装 whisper.cpp，把 `asr.command` 指向 `whisper-cli` |
+| 想看插件到底在干什么 | — | 日志在 `<storage.rootDir>\logs\bridge-YYYY-MM-DD.log`；QQ 里发 `/status` |
+
+## 9. 两条路怎么选
+
+| 你想要的 | 选哪条 |
+| --- | --- |
+| 合规、长期跑、给别人用 | **官方机器人**（`qq-official`）：不会封，但只能进允许的群、不能冒充你 |
+| 像真人一样在小号上聊、进任意群 | **个人号 + SnowLuma/NapCat**：能力全，但**有封号风险**，只适合小号 |

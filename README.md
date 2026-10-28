@@ -50,7 +50,7 @@ dsh web
 4. 打开 DSH → **设置 → dsh bot**
 5. 选平台 → 填参数 → **保存** → **启动**
    - **QQ 官方机器人**：填 AppID / AppSecret（开放平台后台拿），机器人需在「开发体验用户」里加上你自己的 QQ
-   - **NapCat**：填 WebSocket 地址（默认 `ws://127.0.0.1:3001`）和 accessToken，详见 [docs/NAPCAT.md](docs/NAPCAT.md)
+   - **NapCat / SnowLuma（个人 QQ 小号）**：填 WebSocket 地址（默认 `ws://127.0.0.1:3001`）和 accessToken，详见 [docs/NAPCAT.md](docs/NAPCAT.md)
 6. 用你的 QQ 给机器人发一句「你好」
 
 > 需要：Node.js ≥ 20、DSH ≥ 0.2.1-rc.2、一个能用的机器人。装在别处遇到问题先看 [docs/troubleshooting.md](docs/troubleshooting.md)。
@@ -86,7 +86,7 @@ dsh web                                                     # 4) 重启 DSH（�
 | 装不进 DSH / 设置页没有 dsh bot | [docs/install.md](docs/install.md) |
 | 状态行「运行中」但发消息没反应 | [docs/troubleshooting.md](docs/troubleshooting.md) |
 | 日志里一堆 4013 / 4914 之类的错误码 | [docs/manual.zh.md](docs/manual.zh.md) 的「它不听话时」 |
-| 不想用官方机器人，想接自己挂的 QQ | [docs/NAPCAT.md](docs/NAPCAT.md) |
+| 不想用官方机器人，想接自己挂的 QQ（NapCat / SnowLuma 小号） | [docs/NAPCAT.md](docs/NAPCAT.md) |
 
 ---
 
