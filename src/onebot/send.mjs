@@ -148,47 +148,73 @@ export async function sendReply({ client, message, text, config = {}, logger = n
   return { sent, failed };
 }
 
+const MEDIA_KINDS = ['file', 'image', 'voice'];
+const KIND_LABEL = { file: '文件', image: '图片', voice: '语音' };
+
+function mediaKindOf(value) {
+  const text = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return MEDIA_KINDS.indexOf(text) === -1 ? 'file' : text;
+}
+
+// NapCat 认 file:// 绝对路径；裸 Windows 路径会被某些实现按相对路径重新解释
+function fileUrlOf(filePath) {
+  try {
+    return pathToFileURL(filePath).href;
+  } catch {
+    return filePath;
+  }
+}
+
 /**
- * 出站文件：优先用消息段直传（image/file 段），失败再退回上传接口。
- * 不同实现（NapCat / go-cqhttp）对 file 段的支持并不一致，两条路都留着才不会"发不出去"。
+ * 出站媒体：优先用消息段直传，失败再退回上传接口。
+ * kind 只决定消息段类型（image→image、voice→record、file 按扩展名猜），
+ * 不同实现（NapCat / go-cqhttp）对段的支持并不一致，两条路都留着才不会"发不出去"。
  */
-export async function sendFile({ client, message, path: filePath = '', config = {}, logger = null } = {}) {
+export async function sendMedia({ client, message, path: filePath = '', kind = 'file', config = {}, logger = null } = {}) {
+  const mediaKind = mediaKindOf(kind);
+  const label = KIND_LABEL[mediaKind];
   const chatType = message?.chatType === 'group' ? 'group' : 'private';
   const idKey = chatType === 'group' ? 'group_id' : 'user_id';
   const target = String((chatType === 'group' ? message?.groupId : message?.userId) ?? '');
   const wanted = typeof filePath === 'string' ? filePath.trim() : '';
 
   if (wanted === '') {
-    warn(logger, '发文件缺少路径', { chatType });
+    warn(logger, '发' + label + '缺少路径', { chatType });
     return { sent: 0, failed: 1 };
   }
   if (!target) {
-    warn(logger, '缺少发送目标，放弃发文件', { chatType });
+    warn(logger, '缺少发送目标，放弃发' + label, { chatType });
     return { sent: 0, failed: 1 };
   }
   if (typeof client?.call !== 'function') {
-    warn(logger, 'client 不支持 call，放弃发文件', { chatType });
+    warn(logger, 'client 不支持 call，放弃发' + label, { chatType });
     return { sent: 0, failed: 1 };
   }
 
   const name = basename(wanted);
-  // NapCat 认 file:// 绝对路径；裸 Windows 路径会被某些实现按相对路径重新解释
-  let fileUrl = wanted;
-  try {
-    fileUrl = pathToFileURL(wanted).href;
-  } catch {
-    fileUrl = wanted;
-  }
-  const segment = IMAGE_EXT.test(name)
-    ? { type: 'image', data: { file: fileUrl } }
-    : { type: 'file', data: { file: fileUrl, name } };
+  const fileUrl = fileUrlOf(wanted);
   const action = chatType === 'group' ? 'send_group_msg' : 'send_private_msg';
+  const segmentFor = (segmentKind) => {
+    if (segmentKind === 'image') return { type: 'image', data: { file: fileUrl } };
+    if (segmentKind === 'voice') return { type: 'record', data: { file: fileUrl } };
+    return { type: 'file', data: { file: fileUrl, name } };
+  };
+  // 语音段最不通用（go-cqhttp 常不认 record），发不出去就退到"当文件发"，别整条丢
+  const segmentPlan =
+    mediaKind === 'image' ? ['image'] : mediaKind === 'voice' ? ['voice', 'file'] : [IMAGE_EXT.test(name) ? 'image' : 'file'];
 
-  try {
-    await client.call(action, { [idKey]: target, message: [segment] });
-    return { sent: 1, failed: 0 };
-  } catch (error) {
-    warn(logger, '消息段直传文件失败，改走上传接口', { action, error: String(error?.message ?? error) });
+  for (const segmentKind of segmentPlan) {
+    try {
+      await client.call(action, { [idKey]: target, message: [segmentFor(segmentKind)] });
+      if (segmentKind !== mediaKind) warn(logger, '语音段发不出去，已改成按文件发送', { action, path: wanted });
+      return { sent: 1, failed: 0 };
+    } catch (error) {
+      warn(logger, '消息段直传' + label + '失败，改走上传接口', {
+        action,
+        segment: segmentKind,
+        error: String(error?.message ?? error)
+      });
+    }
   }
 
   const upload = chatType === 'group' ? 'upload_group_file' : 'upload_private_file';
@@ -196,7 +222,12 @@ export async function sendFile({ client, message, path: filePath = '', config = 
     await client.call(upload, { [idKey]: target, file: wanted, name });
     return { sent: 1, failed: 0 };
   } catch (error) {
-    warn(logger, upload + ' 上传文件失败', { error: String(error?.message ?? error) });
+    warn(logger, upload + ' 上传' + label + '失败', { error: String(error?.message ?? error) });
     return { sent: 0, failed: 1 };
   }
+}
+
+/** 兼容老接口：sendFile 就是 sendMedia(kind=file)，调用方一行不用改。 */
+export async function sendFile(args = {}) {
+  return sendMedia({ ...args, kind: 'file' });
 }

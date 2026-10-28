@@ -124,29 +124,56 @@ function pickFileInfo(uploaded) {
   return typeof raw === 'string' ? raw.trim() : '';
 }
 
+const MEDIA_KINDS = ['file', 'image', 'voice'];
+const KIND_LABEL = { file: '文件', image: '图片', voice: '语音' };
+
+function mediaKindOf(value) {
+  const text = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return MEDIA_KINDS.indexOf(text) === -1 ? 'file' : text;
+}
+
 /**
- * 出站文件：先上传拿 file_info，再发 msg_type=7 的富媒体消息。
- * 被动回复仍要带 msg_id + 递增 msg_seq，否则平台按重复消息静默丢掉。
+ * 官方富媒体接口只有图片(1)与文件(4)两种 file_type，**没有语音消息**；
+ * 语音一律降级成"当文件发 + 一句文字说明"，并在日志里 warn——不许抛，一条语音不该毁掉整条回复。
  */
-export async function sendQqFile({ client, message, path: filePath = '', config = {}, logger = null } = {}) {
+function fileTypeOf(mediaKind, name) {
+  if (mediaKind === 'image') return FILE_TYPE_IMAGE;
+  if (mediaKind === 'voice') return FILE_TYPE_FILE;
+  return qqFileTypeOf(name);
+}
+
+/**
+ * 出站媒体：先上传拿 file_info，再发 msg_type=7 的富媒体消息。
+ * 被动回复仍要带 msg_id + 递增 msg_seq，否则平台按重复消息静默丢掉。
+ * 返回值里的 note（可选）会被 pipeline 追加到正文，用来解释降级。
+ */
+export async function sendQqMedia({ client, message, path: filePath = '', kind = 'file', config = {}, logger = null } = {}) {
+  const mediaKind = mediaKindOf(kind);
+  const label = KIND_LABEL[mediaKind];
   const wanted = typeof filePath === 'string' ? filePath.trim() : '';
   const chatType = message?.chatType === 'group' ? 'group' : 'private';
   const target = chatType === 'group' ? message?.groupId : message?.userId;
 
   if (wanted === '') {
-    warn(logger, '发文件缺少路径', { chatType });
+    warn(logger, '发' + label + '缺少路径', { chatType });
     return { sent: 0, failed: 1 };
   }
   if (!target) {
-    warn(logger, '缺少发送目标，放弃发文件', { chatType });
+    warn(logger, '缺少发送目标，放弃发' + label, { chatType });
     return { sent: 0, failed: 1 };
   }
   if (typeof client?.uploadFileContent !== 'function' || typeof client?.sendMessage !== 'function') {
-    warn(logger, 'client 不支持富媒体上传，放弃发文件', { chatType });
+    warn(logger, 'client 不支持富媒体上传，放弃发' + label, { chatType });
     return { sent: 0, failed: 1 };
   }
 
   const name = basename(wanted);
+  let note = '';
+  if (mediaKind === 'voice') {
+    warn(logger, 'QQ 官方机器人不支持语音消息，已改成按文件发送', { path: wanted, chatType });
+    note = 'QQ 官方机器人不支持语音消息，这段语音已按文件发送。';
+  }
+
   let bytes = null;
   try {
     bytes = await readFile(wanted);
@@ -160,7 +187,7 @@ export async function sendQqFile({ client, message, path: filePath = '', config 
     const uploaded = await client.uploadFileContent({
       chatType,
       target,
-      fileType: qqFileTypeOf(name),
+      fileType: fileTypeOf(mediaKind, name),
       filename: name,
       bytes,
     });
@@ -180,23 +207,29 @@ export async function sendQqFile({ client, message, path: filePath = '', config 
     body.msg_id = messageId;
     body.msg_seq = nextSeq(messageId);
   }
+  const done = { sent: 1, failed: 0, ...(note === '' ? {} : { note }) };
 
   try {
     await client.sendMessage({ chatType, target, body });
-    return { sent: 1, failed: 0 };
+    return done;
   } catch (error) {
     // 被动回复的 msg_id 会过期，被拒时退化成主动消息再发一次，别让文件直接丢
     if (messageId && isPassiveRejection(error)) {
       try {
         await client.sendMessage({ chatType, target, body: { msg_type: 7, media: { file_info: fileInfo } } });
         warn(logger, '富媒体被动回复被拒，已改用主动消息送达', { error: String(error?.message ?? error).slice(0, 200) });
-        return { sent: 1, failed: 0 };
+        return done;
       } catch (fallbackError) {
-        warn(logger, 'QQ Bot 发文件失败（主动消息也失败）', { error: String(fallbackError?.message ?? fallbackError).slice(0, 200) });
+        warn(logger, 'QQ Bot 发' + label + '失败（主动消息也失败）', { error: String(fallbackError?.message ?? fallbackError).slice(0, 200) });
         return { sent: 0, failed: 1 };
       }
     }
-    warn(logger, 'QQ Bot 发文件失败', { error: String(error?.message ?? error).slice(0, 200) });
+    warn(logger, 'QQ Bot 发' + label + '失败', { error: String(error?.message ?? error).slice(0, 200) });
     return { sent: 0, failed: 1 };
   }
+}
+
+/** 兼容老接口：sendQqFile 就是 sendQqMedia(kind=file)，调用方一行不用改。 */
+export async function sendQqFile(args = {}) {
+  return sendQqMedia({ ...args, kind: 'file' });
 }

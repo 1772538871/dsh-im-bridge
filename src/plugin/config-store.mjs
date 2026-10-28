@@ -31,7 +31,21 @@ export const DEFAULT_CONFIG = {
     maxConcurrentRuns: 2,
     maxPromptChars: 8000
   },
-  reply: { maxChunkChars: 1500, errorPrefix: '[bridge] ', showSessionId: false, ack: true, progressEveryMs: 45000, progressMax: 2 },
+  reply: {
+    maxChunkChars: 1500,
+    errorPrefix: '[bridge] ',
+    showSessionId: false,
+    ack: true,
+    progressEveryMs: 45000,
+    progressMax: 2,
+    // 拟人层：发送前按字数停顿（0=不等），封顶 3 秒，只作用于最终回复
+    sendDelayMs: 0,
+    sendDelayMaxMs: 3000,
+    // 0=不限。超了先截断再分段，免得把被动回复次数用光
+    maxReplyChars: 0
+  },
+  // 拟人层：群里没 @ 也接话。今天只做被动触发（消息到了才判断），没有定时器
+  social: { mustReplyKeywords: [], replyProbability: 0 },
   // 只对 inprocess 有意义：把 DSH 的审批请求转发到 IM，超时按拒绝处理（5 分钟）
   approval: { enabled: true, timeoutMs: 300000, scope: 'own', chatKey: '' },
   // 只对 inprocess 有意义：把 DSH 的提问（ask_user_question 卡片）转发到 IM，超时按跳过处理，
@@ -240,6 +254,22 @@ export function normalizeConfig(raw, options = {}) {
     return trim ? value.trim() : value;
   };
 
+  // 概率用浮点，不能用 readInt（它会把 0.3 压成 0，等于把功能悄悄关掉）
+  const readProbability = (obj, name, key, def) => {
+    const value = obj[key];
+    if (value === undefined || value === null || value === '') return def;
+    const n = Number(value);
+    if (!Number.isFinite(n)) {
+      problems.push(name + ' 必须是 0~1 之间的数字，当前为 ' + JSON.stringify(value));
+      return def;
+    }
+    if (n < 0 || n > 1) {
+      problems.push(name + ' 必须在 0~1 之间，当前为 ' + n);
+      return def;
+    }
+    return n;
+  };
+
   const readList = (obj, name, key, def) => {
     const value = obj[key];
     if (value === undefined || value === null) return def.slice();
@@ -282,6 +312,7 @@ export function normalizeConfig(raw, options = {}) {
   const storageRaw = section('storage');
   const securityRaw = section('security');
   const replyRaw = section('reply');
+  const socialRaw = section('social');
   const approvalRaw = section('approval');
   const questionsRaw = section('questions');
   const asrRaw = section('asr');
@@ -361,7 +392,19 @@ export function normalizeConfig(raw, options = {}) {
       showSessionId: readBool(replyRaw, 'reply.showSessionId', 'showSessionId', DEFAULT_CONFIG.reply.showSessionId),
       ack: readBool(replyRaw, 'reply.ack', 'ack', DEFAULT_CONFIG.reply.ack),
       progressEveryMs: readInt(replyRaw, 'reply.progressEveryMs', 'progressEveryMs', DEFAULT_CONFIG.reply.progressEveryMs, 0),
-      progressMax: readInt(replyRaw, 'reply.progressMax', 'progressMax', DEFAULT_CONFIG.reply.progressMax, 0)
+      progressMax: readInt(replyRaw, 'reply.progressMax', 'progressMax', DEFAULT_CONFIG.reply.progressMax, 0),
+      sendDelayMs: readInt(replyRaw, 'reply.sendDelayMs', 'sendDelayMs', DEFAULT_CONFIG.reply.sendDelayMs, 0),
+      sendDelayMaxMs: readInt(replyRaw, 'reply.sendDelayMaxMs', 'sendDelayMaxMs', DEFAULT_CONFIG.reply.sendDelayMaxMs, 0),
+      maxReplyChars: readInt(replyRaw, 'reply.maxReplyChars', 'maxReplyChars', DEFAULT_CONFIG.reply.maxReplyChars, 0)
+    },
+    social: {
+      mustReplyKeywords: readList(socialRaw, 'social.mustReplyKeywords', 'mustReplyKeywords', DEFAULT_CONFIG.social.mustReplyKeywords),
+      replyProbability: readProbability(
+        socialRaw,
+        'social.replyProbability',
+        'replyProbability',
+        DEFAULT_CONFIG.social.replyProbability
+      )
     },
     approval: {
       enabled: readBool(approvalRaw, 'approval.enabled', 'enabled', DEFAULT_CONFIG.approval.enabled),

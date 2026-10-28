@@ -63,6 +63,25 @@ const COMMON_FIELDS = [
   }),
   field('reply.errorPrefix', '出错时的提示前面加什么标签', 'text', { placeholder: '[bridge] ' }),
   field('reply.showSessionId', '回复末尾带上内部编号（排查问题用）', 'boolean'),
+  field('reply.sendDelayMs', '发送前停顿（毫秒/每字，模拟打字）', 'number', {
+    placeholder: '0',
+    help: '比如填 30：回复 100 字就先停 3 秒再发，像在打字。0=立刻发。只有最终回复会等，回执和进度照旧秒回。'
+  }),
+  field('reply.sendDelayMaxMs', '上面那个停顿最多等多久（毫秒）', 'number', {
+    placeholder: '3000',
+    help: '长回复不该让你干等半分钟：停顿时长封顶在这里，并在上下 20% 之间随机浮动。'
+  }),
+  field('reply.maxReplyChars', '单条回复最多多少字（0=不限）', 'number', {
+    placeholder: '0',
+    help: '超了先截断到上限，末尾添一句"太长截断了，总共 N 字"，然后再按上面的单条字数分段。'
+  }),
+  field('social.mustReplyKeywords', '这些词出现就一定回（一行一个，群聊免 @）', 'stringList', {
+    help: '群里没 @ 它，但消息里出现这些词它也会回。命中优先于"群里必须 @"，私聊不受影响。'
+  }),
+  field('social.replyProbability', '没 @ 也接话的概率（0~1）', 'number', {
+    placeholder: '0',
+    help: '0=不接；0.2=没 @ 也没命中必答词时，有两成机会插一句。只会在真有人说话时判断，不会自己定时开口。'
+  }),
   field('asr.command', '语音转写程序（比如 whisper，留空=只把语音文件路径给它，不转文字）', 'text', { placeholder: 'whisper' }),
   field('asr.args', '传给转写程序的参数（一行一个，{file} 代表语音文件）', 'stringList'),
   field('asr.timeoutMs', '转写最多等多久（毫秒）', 'number', { placeholder: '60000' }),

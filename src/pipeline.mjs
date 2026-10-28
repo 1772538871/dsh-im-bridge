@@ -18,12 +18,26 @@ import { createSessionBinding } from './session-binding.mjs';
 const DEFAULT_ERROR_PREFIX = "[bridge] ";
 const NO_TEXT_PLACEHOLDER = "（DSH 这次没有返回文字内容）";
 
-// 出站文件：一条回复最多带 3 个文件（再多平台会拒，用户一次也看不过来）
+// 出站媒体：一条回复最多带 3 个同类（再多平台会拒，用户一次也看不过来）
 const SENDFILE_LIMIT = 3;
 const DEFAULT_MAX_FILE_BYTES = 104857600;
+// 模拟打字的停顿上限：真人不会因为一段长文就让你等半分钟
+const DEFAULT_SEND_DELAY_MAX_MS = 3000;
+const SEND_DELAY_JITTER = 0.2;
+
+// 三种媒体标记语义完全一致（单独一行、绝对路径、最多 3 个），只有平台侧的段类型不同。
+// 顺序即发送顺序，也即说明文字的先后顺序。
+const MEDIA_KINDS = [
+  { kind: "file", marker: "sendfile", label: "文件", unit: "个文件" },
+  { kind: "image", marker: "sendimage", label: "图片", unit: "张图片" },
+  { kind: "voice", marker: "sendvoice", label: "语音", unit: "条语音" },
+];
+const MEDIA_KIND_BY_MARKER = new Map(MEDIA_KINDS.map((item) => [item.marker, item]));
+const ALL_MEDIA_KINDS = new Set(MEDIA_KINDS.map((item) => item.kind));
+const NO_MEDIA_KINDS = new Set();
 // 全角冒号也认：模型偶尔会把 : 写成 ：
-const SENDFILE_MARKER_SOURCE = "\\[\\[\\s*sendfile\\s*[:：]\\s*([^\\]\\n]+?)\\s*\\]\\]";
-const sendFileMarkerRe = () => new RegExp(SENDFILE_MARKER_SOURCE, "gi");
+const MEDIA_MARKER_SOURCE = "\\[\\[\\s*(sendfile|sendimage|sendvoice)\\s*[:：]\\s*([^\\]\\n]+?)\\s*\\]\\]";
+const mediaMarkerRe = () => new RegExp(MEDIA_MARKER_SOURCE, "gi");
 // 跳过原因的顺序固定（测试与文案都依赖这个顺序），一次合并成一行人话
 const SENDFILE_SKIP = [
   ["relative", "不是绝对路径"],
@@ -52,9 +66,10 @@ function mapMarkerLines(text, replacer) {
   const kept = [];
   for (const line of normalizeNewlines(text).split("\n")) {
     let touched = false;
-    const replaced = line.replace(sendFileMarkerRe(), (match, raw) => {
+    const replaced = line.replace(mediaMarkerRe(), (match, name, raw) => {
       touched = true;
-      return replacer(cleanMarkerPath(raw), match);
+      const item = MEDIA_KIND_BY_MARKER.get(String(name).toLowerCase());
+      return replacer(item, cleanMarkerPath(raw), match);
     });
     if (!touched) {
       kept.push(line);
@@ -66,25 +81,49 @@ function mapMarkerLines(text, replacer) {
   return kept.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
-/** 按出现顺序取出所有 [[sendfile: 路径]]；重复项留给调用方去重。 */
-export function extractSendFilePaths(text) {
+/** 按出现顺序取出所有出站媒体标记；重复项留给调用方去重。 */
+export function extractSendMedia(text) {
   const source = normalizeNewlines(text);
-  const paths = [];
-  for (const match of source.matchAll(sendFileMarkerRe())) {
-    const path = cleanMarkerPath(match[1]);
-    if (path !== "") paths.push(path);
+  const items = [];
+  for (const match of source.matchAll(mediaMarkerRe())) {
+    const item = MEDIA_KIND_BY_MARKER.get(String(match[1]).toLowerCase());
+    const path = cleanMarkerPath(match[2]);
+    if (item && path !== "") items.push({ kind: item.kind, path });
   }
-  return paths;
+  return items;
+}
+
+function pathsOfKind(text, kind) {
+  return extractSendMedia(text)
+    .filter((item) => item.kind === kind)
+    .map((item) => item.path);
+}
+
+/** 只想要文件路径的老调用方：行为与三合一之前完全一致。 */
+export function extractSendFilePaths(text) {
+  return pathsOfKind(text, "file");
+}
+
+export function extractSendImagePaths(text) {
+  return pathsOfKind(text, "image");
+}
+
+export function extractSendVoicePaths(text) {
+  return pathsOfKind(text, "voice");
+}
+
+function renderMarkers(text, keptKinds) {
+  return mapMarkerLines(text, (item, path) => (keptKinds.has(item.kind) ? path : ""));
 }
 
 /** 把标记从正文里拿掉：只含标记的行整行消失，标记夹在句子里就只删标记。 */
 export function stripSendFileMarkers(text) {
-  return mapMarkerLines(text, () => "");
+  return renderMarkers(text, NO_MEDIA_KINDS);
 }
 
-/** 平台没有发文件能力时的降级形态：标记换成纯路径，用户至少知道文件在哪。 */
+/** 平台没有发媒体能力时的降级形态：标记换成纯路径，用户至少知道文件在哪。 */
 export function markersToPaths(text) {
-  return mapMarkerLines(text, (path) => path);
+  return renderMarkers(text, ALL_MEDIA_KINDS);
 }
 
 /** 发送一个文件算不算失败：抛错由调用方接，这里只读返回值。 */
@@ -119,6 +158,7 @@ async function loadDefaultDeps(names) {
     planMedia: () => import("./onebot/media.mjs").then((mod) => mod.planMedia),
     sendReply: () => import("./onebot/send.mjs").then((mod) => mod.sendReply),
     sendFile: () => import("./onebot/send.mjs").then((mod) => mod.sendFile),
+    sendMedia: () => import("./onebot/send.mjs").then((mod) => mod.sendMedia),
   };
   const resolved = {};
   await Promise.all(
@@ -206,12 +246,15 @@ export function createPipeline({
   const resolveDeps = () => {
     const injected = deps ?? {};
     const missing = CORE_DEPS.filter((name) => typeof injected[name] !== "function");
-    // sendFile 只在调用方完全没注入 deps 时补 OneBot 默认实现（命令行那条路）。
-    // 注入了 deps 的一方自己负责这张能力表：缺 sendFile = 这个平台不发文件，
-    // 由 sendMarkedFiles 降级成文字路径，而不是报错。
-    if (deps == null) missing.push("sendFile");
+    // sendFile/sendMedia 只在调用方完全没注入 deps 时补 OneBot 默认实现（命令行那条路）。
+    // 注入了 deps 的一方自己负责这张能力表：缺 sendMedia = 这个平台不发媒体，
+    // 由 sendMarkedMedia 降级成文字路径，而不是报错。
+    if (deps == null) missing.push("sendFile", "sendMedia");
     depsPromise ??= (missing.length === 0 ? Promise.resolve({}) : loadDefaultDeps(missing)).then((base) => ({
       transcribe: defaultTranscribe,
+      // 打字的停顿与抖动都走注入点：测试不许真等 3 秒，也不许依赖真随机
+      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+      random: Math.random,
       ...base,
       ...injected,
     }));
@@ -231,11 +274,57 @@ export function createPipeline({
     return detail === "" ? base : base + "（" + String(detail).replace(/\s+/g, " ").slice(0, 160) + "）";
   };
 
-  async function deliver(message, text) {
-  // 交给 QQ 之前统一压成纯文本版式（模型经常输出 markdown，QQ 不渲染）
-  text = formatForQq(text);
+  function maxReplyChars() {
+    const raw = Number(config?.reply?.maxReplyChars);
+    return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 0;
+  }
+
+  /** 单条回复超长就截断。截断排在分段之前：分得太碎会先把被动回复次数用光。 */
+  function truncateReply(text) {
+    const cap = maxReplyChars();
+    if (cap <= 0 || text.length <= cap) return text;
+    const total = text.length;
+    let end = cap;
+    const code = text.charCodeAt(end - 1);
+    // 硬切不能把 emoji 的代理对劈成两半
+    if (code >= 0xd800 && code <= 0xdbff) end -= 1;
+    return text.slice(0, Math.max(0, end)) + "……（太长截断了，总共 " + total + " 字）";
+  }
+
+  /**
+   * 模拟打字的停顿：字数 × 每字毫秒，封顶后再叠 ±20% 抖动（真人不会每次一样快）。
+   * 只用在最终回复上；回执和进度都是"让人安心"的消息，等它们只会更慌。
+   */
+  function typingPauseMs(charCount, resolved) {
+    const perChar = Number(config?.reply?.sendDelayMs);
+    if (!Number.isFinite(perChar) || perChar <= 0) return 0;
+    const capRaw = Number(config?.reply?.sendDelayMaxMs);
+    const cap = Number.isFinite(capRaw) && capRaw >= 0 ? Math.floor(capRaw) : DEFAULT_SEND_DELAY_MAX_MS;
+    const base = Math.min(Math.max(0, charCount) * perChar, cap);
+    if (base <= 0) return 0;
+    const draw = typeof resolved?.random === "function" ? Number(resolved.random()) : NaN;
+    // 随机源坏了也必须能发出去：拿不到合法值时按中位抖动
+    const unit = Number.isFinite(draw) && draw >= 0 && draw <= 1 ? draw : 0.5;
+    return Math.max(0, Math.round(base * (1 - SEND_DELAY_JITTER + 2 * SEND_DELAY_JITTER * unit)));
+  }
+
+  async function deliver(message, text, { humanDelay = false } = {}) {
+    // 交给 QQ 之前统一压成纯文本版式（模型经常输出 markdown，QQ 不渲染）
+    text = truncateReply(formatForQq(text));
     try {
       const resolved = await resolveDeps();
+      if (humanDelay) {
+        const pause = typingPauseMs(text.length, resolved);
+        if (pause > 0) {
+          const sleep = typeof resolved.sleep === "function" ? resolved.sleep : null;
+          try {
+            if (sleep) await sleep(pause);
+            else await new Promise((resolve) => setTimeout(resolve, pause));
+          } catch {
+            // 等待失败也要把回复发出去：停顿只是拟人，不是前置条件
+          }
+        }
+      }
       return await resolved.sendReply({ client, message, text, config, logger });
     } catch (error) {
       logger?.error?.("发送回复失败", { error: String(error?.message ?? error) });
@@ -251,82 +340,111 @@ export function createPipeline({
   }
 
   /**
-   * 出站文件：把回复正文里的 [[sendfile: 路径]] 变成真正发送出去的文件。
+   * 出站媒体：把正文里的 [[sendfile:]] / [[sendimage:]] / [[sendvoice:]] 变成真正发出去的媒体。
    * 校验不过的、超上限的、发失败的都不抛，只在正文末尾补一行人话。
    */
-  async function sendMarkedFiles({ message, text, resolved }) {
-    const paths = extractSendFilePaths(text);
-    if (paths.length === 0) return { text: stripSendFileMarkers(text), sent: 0, failed: 0, skipped: 0 };
+  async function sendMarkedMedia({ message, text, resolved }) {
+    const items = extractSendMedia(text);
+    if (items.length === 0) return { text: stripSendFileMarkers(text), sent: 0, failed: 0, skipped: 0 };
 
-    const sendFile = resolved?.sendFile;
-    if (typeof sendFile !== "function") {
-      // 这个平台没有发文件能力：降级成"只回文字路径"，不失败
-      logger?.debug?.("当前平台没有 sendFile，标记降级为文字路径", { count: paths.length });
-      return { text: markersToPaths(text), sent: 0, failed: 0, skipped: 0 };
-    }
+    // 能力表：sendMedia(kind) 优先；只注入了老式 sendFile 的平台仍能发普通文件
+    const shared = resolved?.sendMedia;
+    const legacyFile = resolved?.sendFile;
+    const senderOf = (kind) => {
+      if (typeof shared === "function") return (args) => shared({ ...args, kind });
+      if (kind === "file" && typeof legacyFile === "function") return (args) => legacyFile(args);
+      return null;
+    };
 
     const limit = maxFileBytes();
-    const skipped = new Map();
-    const accepted = [];
-    const seen = new Set();
-    const bump = (key) => skipped.set(key, (skipped.get(key) ?? 0) + 1);
-    for (const path of paths) {
-      // 同一路径写两遍只发一次：模型常在结尾把同一个文件再列一遍
-      if (seen.has(path)) continue;
-      seen.add(path);
-      if (!isAbsolutePath(path)) {
-        bump("relative");
-        continue;
-      }
-      let info = null;
-      try {
-        info = await stat(path);
-      } catch {
-        info = null; // 不存在或没权限都算"拿不到"，细因只在日志里
-      }
-      if (!info?.isFile()) {
-        bump("missing");
-        continue;
-      }
-      if (info.size > limit) {
-        bump("too_large");
-        continue;
-      }
-      if (accepted.length >= SENDFILE_LIMIT) {
-        bump("over_limit");
-        continue;
-      }
-      accepted.push(path);
-    }
-
+    const keptKinds = new Set();
+    const notes = [];
+    const headLines = [];
+    const degraded = [];
     let sent = 0;
     let failed = 0;
-    for (const path of accepted) {
-      try {
-        const outcome = await sendFile({ client, message, path, config, logger });
-        if (fileSendFailed(outcome)) {
-          failed += 1;
-          logger?.warn?.("发送文件失败", { path, sent: outcome?.sent, failed: outcome?.failed });
-        } else {
-          sent += 1;
-        }
-      } catch (error) {
-        failed += 1;
-        logger?.warn?.("发送文件失败", { path, error: String(error?.message ?? error) });
+    let skippedCount = 0;
+
+    for (const meta of MEDIA_KINDS) {
+      const paths = items.filter((item) => item.kind === meta.kind).map((item) => item.path);
+      if (paths.length === 0) continue;
+
+      const send = senderOf(meta.kind);
+      if (send === null) {
+        // 这个平台没有发这类媒体的能力：降级成"只回文字路径"，不失败
+        logger?.debug?.("当前平台没有发送能力，标记降级为文字路径", { kind: meta.kind, count: paths.length });
+        keptKinds.add(meta.kind);
+        continue;
       }
+
+      const skipped = new Map();
+      const accepted = [];
+      const seen = new Set();
+      const bump = (key) => skipped.set(key, (skipped.get(key) ?? 0) + 1);
+      for (const path of paths) {
+        // 同一路径写两遍只发一次：模型常在结尾把同一个资源再列一遍
+        if (seen.has(path)) continue;
+        seen.add(path);
+        if (!isAbsolutePath(path)) {
+          bump("relative");
+          continue;
+        }
+        let info = null;
+        try {
+          info = await stat(path);
+        } catch {
+          info = null; // 不存在或没权限都算"拿不到"，细因只在日志里
+        }
+        if (!info?.isFile()) {
+          bump("missing");
+          continue;
+        }
+        if (info.size > limit) {
+          bump("too_large");
+          continue;
+        }
+        if (accepted.length >= SENDFILE_LIMIT) {
+          bump("over_limit");
+          continue;
+        }
+        accepted.push(path);
+      }
+
+      let sentOfKind = 0;
+      let failedOfKind = 0;
+      for (const path of accepted) {
+        try {
+          const outcome = await send({ client, message, path, config, logger });
+          if (fileSendFailed(outcome)) {
+            failedOfKind += 1;
+            logger?.warn?.("发送" + meta.label + "失败", { kind: meta.kind, path, sent: outcome?.sent, failed: outcome?.failed });
+          } else {
+            sentOfKind += 1;
+            // 平台主动降级时的说明（例如 QQ 官方没有语音消息，只能当文件发）
+            if (typeof outcome?.note === "string" && outcome.note !== "") degraded.push("⚠️ " + outcome.note);
+          }
+        } catch (error) {
+          failedOfKind += 1;
+          logger?.warn?.("发送" + meta.label + "失败", { kind: meta.kind, path, error: String(error?.message ?? error) });
+        }
+      }
+
+      sent += sentOfKind;
+      failed += failedOfKind;
+      if (sentOfKind > 0) headLines.push(`已发送 ${sentOfKind} ${meta.unit}`);
+      for (const [key, label] of SENDFILE_SKIP) {
+        const count = skipped.get(key) ?? 0;
+        if (count > 0) notes.push(`⚠️ 跳过了 ${count} ${meta.unit}：${label}`);
+      }
+      const skippedOfKind = [...skipped.values()].reduce((sum, n) => sum + n, 0);
+      skippedCount += skippedOfKind;
+      if (failedOfKind > 0) notes.push(`⚠️ ${failedOfKind} ${meta.unit}发送失败`);
     }
 
-    const notes = [];
-    for (const [key, label] of SENDFILE_SKIP) {
-      const count = skipped.get(key) ?? 0;
-      if (count > 0) notes.push(`⚠️ 跳过了 ${count} 个文件：${label}`);
-    }
-    if (failed > 0) notes.push(`⚠️ ${failed} 个文件发送失败`);
-
-    const body = stripSendFileMarkers(text);
-    const head = body !== "" ? body : sent > 0 ? `已发送 ${sent} 个文件` : "";
-    const skippedCount = [...skipped.values()].reduce((sum, n) => sum + n, 0);
-    return { text: [head, ...notes].filter((line) => line !== "").join("\n"), sent, failed, skipped: skippedCount };
+    const body = renderMarkers(text, keptKinds);
+    const head = body !== "" ? body : headLines.join("\n");
+    const lines = [head, ...notes, ...degraded].filter((line) => line !== "");
+    return { text: lines.join("\n"), sent, failed, skipped: skippedCount };
   }
 
   async function resolveUrl({ plan }) {
@@ -611,15 +729,15 @@ export function createPipeline({
             if (result.rebound === true) {
               logger?.warn?.("会话写句柄一直被占用，已换新会话继续", { chatKey, sessionId: result.sessionId });
             }
-            // 先发正文里点名的文件、再清理标记，最后才发这一段文字
-            const files = await sendMarkedFiles({
+            // 先发正文里点名的媒体、再清理标记，最后才发这一段文字（这一段才等"打字"）
+            const media = await sendMarkedMedia({
               message,
               text: typeof result.text === "string" ? result.text : "",
               resolved,
             });
-            let text = files.text === "" ? NO_TEXT_PLACEHOLDER : files.text;
+            let text = media.text === "" ? NO_TEXT_PLACEHOLDER : media.text;
             if (config?.reply?.showSessionId && result.sessionId) text += `\n[session ${result.sessionId}]`;
-            await deliver(message, text);
+            await deliver(message, text, { humanDelay: true });
             counters.handled += 1;
             return;
           }

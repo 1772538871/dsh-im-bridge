@@ -51,9 +51,10 @@
 - 规则：单文件超 `storage.maxFileBytes` 直接抛 `StorageError`（`.code = 'FILE_TOO_LARGE'`）；`saveFromUrl` 用全局 `fetch`，超限时中止并删除半成品；`sweepRetention` 按 `retentionDays` 删 `media/<date>` 下过期目录。
 
 ### E. src/security.mjs
-- `export function createGuard({ config, logger }) -> Guard`
+- `export function createGuard({ config, logger, random = Math.random }) -> Guard`
 - `Guard = { decide(msg, now = Date.now()) -> { allow: boolean, reason: string } }`
 - 判定顺序（命中即返回，reason 用固定短码）：`chat_type_disabled`(allowPrivate/allowGroup) → `user_not_allowed`(私聊白名单；群聊要求 `userWhitelist` **为空则只按群白名单**，非空则发送者必须在其中) → `group_not_allowed` → `need_at`(群聊 groupRequireAt 且消息里没有 `at` 指向 selfId 或 `at` 全部/@机器人) → `rate_limited`（每用户滑窗 `rateLimitPerMinute`）。`allow:true` 时 reason=`ok`。
+- `need_at` 之前有两道 social 豁免（只在群聊、且消息没 @ 时生效）：命中 `social.mustReplyKeywords` 任一关键词 → 放行（**优先于 groupRequireAt**，日志 info 记一行"群里出现必答词「…」"）；否则 `social.replyProbability > 0` 时以该概率放行（debug 记一行）。随机源由 `random` 注入，测试不依赖真随机。私聊不受 social 影响；两条豁免都在 `rate_limited` 之前，放行后仍受频率限制。
 
 ### F. src/queue.mjs
 - `export function createSerialQueue() -> { run(key, fn) -> Promise<any>, pending(key): number, size(): number }`（同 key 串行，不同 key 并行）

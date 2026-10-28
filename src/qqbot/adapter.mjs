@@ -4,7 +4,7 @@ import { createTokenProvider } from './auth.mjs';
 import { createQqBotClient } from './client.mjs';
 import { createQqBotGateway, INTENTS_GROUP_AND_C2C } from './gateway.mjs';
 import { parseQqBotEvent, planMedia } from './parse.mjs';
-import { sendQqFile, sendQqReply } from './send.mjs';
+import { sendQqFile, sendQqMedia, sendQqReply } from './send.mjs';
 
 export const DEFAULT_API_BASE = 'https://api.bot.qq.com';
 
@@ -83,7 +83,10 @@ export function createQqBotAdapter({ config = {}, logger = null, fetchImpl = glo
     parseEvent: (raw) => parseQqBotEvent(raw, { appId: resolved.appId }),
     planMedia,
     sendReply: sendQqReply,
-    // 出站文件：正文里的 [[sendfile: 路径]] 由 pipeline 提取后交到这里
+    // 出站媒体：正文里的 [[sendfile/sendimage/sendvoice: 路径]] 由 pipeline 提取后交到这里，
+    // kind 只决定 file_type（voice 平台不支持，sendQqMedia 内部降级成文件 + 说明）
+    sendMedia: sendQqMedia,
+    // 老接口保留：仍在用 sendFile 的地方不必跟着改
     sendFile: sendQqFile,
     chatKeyOf,
   };

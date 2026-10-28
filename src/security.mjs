@@ -18,6 +18,35 @@ function listOf(value) {
   return Array.isArray(value) ? value.map((v) => String(v)) : [];
 }
 
+// 必答词按"字符串包含"匹配，空白与重叠项先剔掉，否则日志里会出现命中空串
+function keywordListOf(value) {
+  if (!Array.isArray(value)) return [];
+  const out = [];
+  for (const item of value) {
+    const text = item === undefined || item === null ? '' : String(item).trim();
+    if (text !== '' && out.indexOf(text) === -1) out.push(text);
+  }
+  return out;
+}
+
+function probabilityOf(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return n >= 1 ? 1 : n;
+}
+
+// 群聊消息的正文：官方机器人事件里没有 text 字段，只有文本消息段
+function textOf(msg) {
+  const m = msg || {};
+  if (typeof m.text === 'string') return m.text;
+  const segments = Array.isArray(m.segments) ? m.segments : [];
+  const parts = [];
+  for (const seg of segments) {
+    if (seg && seg.type === 'text' && seg.data && typeof seg.data.text === 'string') parts.push(seg.data.text);
+  }
+  return parts.join('');
+}
+
 export function createGuard(options) {
   const opts = options || {};
   const config = opts.config || {};
@@ -30,6 +59,14 @@ export function createGuard(options) {
   const allowGroup = sec.allowGroup !== false;
   const groupRequireAt = sec.groupRequireAt !== false;
   const rateLimitPerMinute = Number.isFinite(sec.rateLimitPerMinute) ? Math.floor(sec.rateLimitPerMinute) : 6;
+
+  // 拟人层（social）：今天只做"被动接话"——消息来了才掷骰子。
+  // 定时主动搭话是另一件事，需要自己的节流与静默判断，不往这里塞。
+  const social = config.social || {};
+  const mustReplyKeywords = keywordListOf(social.mustReplyKeywords);
+  const replyProbability = probabilityOf(social.replyProbability);
+  // 概率必须可注入：测试要确定性，生产才用真随机
+  const random = typeof opts.random === 'function' ? opts.random : Math.random;
 
   const hits = new Map();
 
@@ -91,7 +128,18 @@ export function createGuard(options) {
         const targets = atTargetsOf(m);
         const selfId = m.selfId === undefined || m.selfId === null ? '' : String(m.selfId);
         const targeted = targets.indexOf(ALL_AT) !== -1 || (selfId !== '' && targets.indexOf(selfId) !== -1);
-        if (!targeted) return deny('need_at');
+        if (!targeted) {
+          // 必答词优先于 groupRequireAt：用户把这些词写进配置，就是"说到它我要在场"
+          const hit = mustReplyKeywords.find((keyword) => textOf(m).indexOf(keyword) !== -1);
+          if (hit !== undefined) {
+            notice('群里出现必答词「' + hit + '」，没 @ 也回：userId=' + userId + ' groupId=' + groupId);
+          } else if (replyProbability > 0 && random() < replyProbability) {
+            // 概率接话只发生在"本来会被 need_at 拦掉"的这一刻，没有任何定时器参与
+            debug('群聊没 @，按 social.replyProbability 接一句：userId=' + userId + ' groupId=' + groupId);
+          } else {
+            return deny('need_at');
+          }
+        }
       }
 
       if (rateLimitPerMinute > 0) {
