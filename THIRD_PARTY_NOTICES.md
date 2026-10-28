@@ -22,3 +22,12 @@
 - 库名：jsQR（<https://github.com/cozmo/jsQR>）· 作者：Cosmo Wolfe · 许可证：Apache-2.0
 - 用途：仅在交付自证里一次性 `fetch` 它的 UMD 包、在 Node 里解码 `encodeQr()` 的输出，证明二维码真的能扫出来。
 - 它**不**出现在 `package.json`、不进仓库、不参与运行时或 `node --test`。
+
+---
+
+## Simple Icons（品牌图标路径）
+
+- 来源：https://github.com/simple-icons/simple-icons
+- 许可证：CC0 1.0 Universal（公有领域奉献）
+- 用途：设置页平台卡片里 QQ（tencentqq）与微信（wechat）的品牌字形路径（`lib/client.js` 的 `ICON_BRAND`）。
+- 说明：商标归各自权利人所有；此处仅作"这是哪个平台的接入方式"的指示性使用。字形按 app 图标样式渲染（品牌色圆角方块 + 白色字形），路径未改动。
