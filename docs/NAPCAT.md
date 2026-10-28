@@ -74,7 +74,7 @@ SnowLuma 和 NapCat 是同一层东西——**跑在本机的 QQ 互操作运行
    | HTTP | `127.0.0.1:3000` |
    | 正向 WS | `127.0.0.1:3001` |
    | accessToken | 自己编一串，待会填到插件里 |
-6. 回到 **DSH → 设置 → dsh bot**：平台选「**QQ（NapCat / OneBot）**」，`WebSocket 地址` 填 `ws://127.0.0.1:3001`，`accessToken` 填同一串，保存 → 启动。
+6. 回到 **DSH → 设置 → dsh bot**：平台选「**QQ 个人账号**」，`WebSocket 地址` 填 `ws://127.0.0.1:3001`，`accessToken` 填同一串，保存 → 启动。
 7. 用白名单里的号给小号发一句「你好」；群聊里 @ 一下小号（默认 `groupRequireAt: true`）。
 
 ### 7.2 风险（必须知道）

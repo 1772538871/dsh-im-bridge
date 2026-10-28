@@ -174,8 +174,8 @@ const PLATFORM_FIELDS = {
 const PLATFORMS = [
   {
     id: 'qq-napcat',
-    label: 'QQ（NapCat / OneBot 11）',
-    description: '本机 NapCat 反向 WebSocket 接入，支持私聊与群 @。',
+    label: 'QQ 个人账号',
+    description: '用自己的 QQ 号（NapCat / SnowLuma）接入，支持私聊与群 @。',
     fields: PLATFORM_FIELDS['qq-napcat'].concat(COMMON_FIELDS)
   },
   {

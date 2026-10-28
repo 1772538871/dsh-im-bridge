@@ -108,7 +108,7 @@ test('platformCards: 每个平台一张卡片，选中项带高亮标记与图�
   assert.equal(picked.length, 1, '只能有一张选中');
   assert.equal(picked[0].id, 'qq-official');
   assert.equal(cards[0].label, 'QQ（NapCat / OneBot）', '名称原样来自 /platforms');
-  assert.equal(cards[0].icon, '🐱');
+  assert.equal(cards[0].icon, '🐧');
   assert.equal(cards[1].icon, '🤖');
 });
 
@@ -275,7 +275,7 @@ test('describeBindingCard: 官方平台显示「QQ 机器人」，头像用平�
   assert.equal(official.avatar, '🤖');
   const napcat = describeBindingCard({ running: true }, { platform: 'qq-napcat' });
   assert.equal(napcat.name, 'NapCat 机器人');
-  assert.equal(napcat.avatar, '🐱');
+  assert.equal(napcat.avatar, '🐧');
 });
 
 // ---------------- 4. 响应式两栏 ----------------

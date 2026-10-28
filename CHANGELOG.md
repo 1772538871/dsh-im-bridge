@@ -2,6 +2,12 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，语义化版本。
 
+## [0.9.1] - 2026-10-23
+
+### 变更
+- 平台名 `QQ（NapCat / OneBot 11）` → **`QQ 个人账号`**，图标换成 QQ 企鹅（🐧）；卡片名不再换行（超出显示省略号）。
+- 文档里的旧叫法同步（`docs/manual.zh.md`、`docs/NAPCAT.md`）。
+
 ## [0.9.0] - 2026-10-23
 
 ### 新增（P9 拟人层）
