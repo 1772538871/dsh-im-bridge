@@ -175,7 +175,7 @@ const PLATFORMS = [
   {
     id: 'qq-napcat',
     label: 'QQ 个人账号',
-    description: '用自己的 QQ 号（NapCat / SnowLuma）接入，支持私聊与群 @。',
+    description: '用小号 QQ 扫码登录（NapCat / SnowLuma 托管），支持私聊与群 @。',
     fields: PLATFORM_FIELDS['qq-napcat'].concat(COMMON_FIELDS)
   },
   {

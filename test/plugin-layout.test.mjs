@@ -170,11 +170,11 @@ test('stepsOf: 官方机器人三步就是手机上要做的三个动作', () =>
   assert.equal(steps[2].text, '回到这里填进去，点「验证凭证」');
 });
 
-test('stepsOf: NapCat 三步先开 6099 面板，再扫码，最后确认 3001 端口', () => {
+test('stepsOf: 个人号三步是先装并启动、再扫码登录小号、最后填地址口令', () => {
   const { stepsOf } = loadClient();
   const steps = stepsOf('qq-napcat');
   assert.equal(steps.length, 3);
-  assert.ok(steps[0].text.includes('127.0.0.1:6099'), steps[0].text);
+  assert.ok(steps[0].text.includes('NapCat'), steps[0].text);
   assert.ok(steps[1].text.includes('扫码登录'), steps[1].text);
   assert.ok(steps[2].text.includes('3001'), steps[2].text);
   assert.ok(steps[2].text.includes('检测连接'), steps[2].text);
@@ -197,13 +197,13 @@ test('connectCopy: 官方机器人给出等待状态、主标题、说明和开�
   assert.ok(copy.action.includes('打开开放平台'), copy.action);
 });
 
-test('connectCopy: NapCat 指向本机面板，并说明二维码在 NapCat 自己那边', () => {
-  const { connectCopy, NAPCAT_WEB_URL } = loadClient();
+test('connectCopy: 个人号给下载页，并说明二维码在 NapCat 自己那边', () => {
+  const { connectCopy, NAPCAT_DOWNLOAD_URL } = loadClient();
   const copy = connectCopy('qq-napcat');
-  assert.equal(copy.waitText, '等待 NapCat 登录');
-  assert.equal(copy.title, '用手机 QQ 扫码登录 NapCat');
-  assert.equal(copy.description, 'NapCat 会在它自己的面板里给出登录二维码，扫完回来点「检测连接」。');
-  assert.equal(copy.url, NAPCAT_WEB_URL);
+  assert.equal(copy.waitText, '等待用小号扫码登录');
+  assert.equal(copy.title, '小号 QQ 扫码登录，托管给 DSH');
+  assert.equal(copy.description, '先在电脑上装 NapCat / SnowLuma 并启动，它会给你登录二维码；用手机 QQ 扫它、把小号登进去，再把端口和口令填到下面。');
+  assert.equal(copy.url, NAPCAT_DOWNLOAD_URL);
 });
 
 test('connectCopy: 没选平台时不给链接，也不假装已连通', () => {

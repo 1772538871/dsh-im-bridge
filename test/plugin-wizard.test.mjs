@@ -372,12 +372,12 @@ test('resolveWizardStep: 官方机器人三步各有状态，第一步指向开�
   assert.equal(exports.OPEN_PLATFORM_URL, steps[0].url);
 });
 
-test('resolveWizardStep: 平台切到 NapCat 时第一步换成 6099 并提示扫码登录', () => {
+test('resolveWizardStep: 平台切到个人号时第一步给下载页并提示扫码登录', () => {
   const { exports } = loadClient();
   const steps = exports.resolveWizardStep({ platform: 'qq-napcat' });
-  assert.equal(steps[0].url, 'http://127.0.0.1:6099');
+  assert.equal(steps[0].url, 'https://github.com/NapNeko/NapCatQQ/releases');
   assert.ok(steps[0].text.includes('扫码'), steps[0].text);
-  assert.equal(steps[0].title, '登录 NapCat');
+  assert.equal(steps[0].title, '装好 NapCat 并扫码');
   // NapCat 没有 AppID/AppSecret，这一步直接算通过，不装成"没做"
   assert.equal(steps[1].status, 'ok');
   assert.ok(steps[1].text.includes('不用做'), steps[1].text);
@@ -491,7 +491,7 @@ test('渲染: 向导卡片在设置页最上面，官方平台给出两个输入
   assert.ok(findAll(element, (n) => n.type === 'button' && textOf(n) === '发条测试消息').length === 1);
 });
 
-test('渲染: NapCat 平台第一步换成 6099，且不显示 AppID/AppSecret 输入', () => {
+test('渲染: 个人号平台第一步给下载页，且不显示 AppID/AppSecret 输入', () => {
   const base = loadClient().exports;
   const state = {
     ...base.createInitialState(),
@@ -501,8 +501,8 @@ test('渲染: NapCat 平台第一步换成 6099，且不显示 AppID/AppSecret �
   const { exports } = loadClient(state);
   const element = exports.DshBotSection({});
   const anchors = findAll(element, (n) => n.type === 'a');
-  assert.equal(anchors[0].props.href, 'http://127.0.0.1:6099');
-  assert.ok(textOf(element).includes('扫码登录 NapCat'), textOf(element));
+  assert.equal(anchors[0].props.href, 'https://github.com/NapNeko/NapCatQQ/releases');
+  assert.ok(textOf(element).includes('扫码登录'), textOf(element));
   assert.equal(findAll(element, (n) => n.type === 'button' && textOf(n) === '验证凭证').length, 0);
 });
 

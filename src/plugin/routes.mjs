@@ -16,7 +16,7 @@ export const SANDBOX_API_BASE = 'https://sandbox.api.sgroup.qq.com';
 // 向导卡「扫码」块的二维码内容：必须是真能在手机上打开的那个地址
 export const WIZARD_QR_TARGETS = {
   'qq-official': 'https://q.qq.com/qqbot/#/developer',
-  'qq-napcat': 'http://127.0.0.1:6099'
+  'qq-napcat': 'https://github.com/NapNeko/NapCatQQ/releases'
 };
 
 // 二维码在宿主侧算好随 /platforms 下发：lib/client.js 是单文件包，引不到 lib/qr.js。

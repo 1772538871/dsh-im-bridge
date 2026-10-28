@@ -5,7 +5,7 @@ import { API_PREFIX, WIZARD_QR_TARGETS, buildWizardQr, createApiHandler, wizardQ
 import { QR_MAX_VERSION, encodeQr, qrToSvg } from '../lib/qr.js';
 
 const OFFICIAL_URL = 'https://q.qq.com/qqbot/#/developer';
-const NAPCAT_URL = 'http://127.0.0.1:6099';
+const NAPCAT_URL = 'https://github.com/NapNeko/NapCatQQ/releases';
 
 function darkCount(qr) {
   let count = 0;
