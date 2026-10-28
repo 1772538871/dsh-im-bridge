@@ -4,7 +4,7 @@ import { createTokenProvider } from './auth.mjs';
 import { createQqBotClient } from './client.mjs';
 import { createQqBotGateway, INTENTS_GROUP_AND_C2C } from './gateway.mjs';
 import { parseQqBotEvent, planMedia } from './parse.mjs';
-import { sendQqReply } from './send.mjs';
+import { sendQqFile, sendQqReply } from './send.mjs';
 
 export const DEFAULT_API_BASE = 'https://api.bot.qq.com';
 
@@ -83,6 +83,8 @@ export function createQqBotAdapter({ config = {}, logger = null, fetchImpl = glo
     parseEvent: (raw) => parseQqBotEvent(raw, { appId: resolved.appId }),
     planMedia,
     sendReply: sendQqReply,
+    // 出站文件：正文里的 [[sendfile: 路径]] 由 pipeline 提取后交到这里
+    sendFile: sendQqFile,
     chatKeyOf,
   };
 

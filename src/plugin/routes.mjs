@@ -1,12 +1,17 @@
 import { readFile } from 'node:fs/promises';
-import { maskSecrets, mergeSecretMasks, resolveLogFile } from './config-store.mjs';
+import { SECRET_MASK, maskSecrets, mergeSecretMasks, resolveLogFile } from './config-store.mjs';
 import { listPlatforms } from './platforms.mjs';
+import { createTokenProvider } from '../qqbot/auth.mjs';
+import { createQqBotClient } from '../qqbot/client.mjs';
 
 export const API_PREFIX = '/dsh-bot/api';
 export const MAX_BODY_BYTES = 64 * 1024;
 export const MAX_TAIL_LINES = 500;
 const DEFAULT_TAIL_LINES = 100;
 const CONTROL_ACTIONS = ['start', 'stop', 'restart'];
+// token 接口只在正式域提供（沙箱域实测 404），网关二次确认才跟着 sandbox 开关走沙箱域
+export const TOKEN_API_BASE = 'https://api.bot.qq.com';
+export const SANDBOX_API_BASE = 'https://sandbox.api.sgroup.qq.com';
 
 function errorText(error) {
   return error && error.message ? String(error.message) : String(error);
@@ -72,7 +77,127 @@ function tailCount(url) {
   return Math.min(Math.floor(raw), MAX_TAIL_LINES);
 }
 
-export function createApiHandler({ configStore, runtime, logger = null, now = () => Date.now() } = {}) {
+// ---------------- 「连接向导」第 2 步：验证凭证 ----------------
+// 向导要的是"能不能真的换到 token、网关认不认"，所以这里只做两件真事，
+// 不写配置、不启动运行时：拿 token（正式域）+ 拉一次 /gateway（跟着 sandbox 走）。
+
+export const MSG_SECRET_WRONG = 'AppSecret 不对：去开放平台 → 开发设置 → 重置密钥';
+export const MSG_UNPUBLISHED = '机器人还没发布：把「沙箱环境」打开，并把自己的号加进体验成员';
+const MSG_APPID_EMPTY = 'AppID 没填：去开放平台 → 开发设置 → 复制机器人 AppID';
+const MSG_SECRET_EMPTY = 'AppSecret 没填：去开放平台 → 开发设置 → 重置密钥，把新密钥填进来';
+// 网关侧的"环境不匹配"错误：未上线机器人在正式网关会 close/报这些码
+const ENV_ERROR_CODES = new Set([4903, 4904, 4914, 4915]);
+const AUTH_ERROR_CODES = new Set([11241, 11243]);
+
+function textOf(value) {
+  return value === undefined || value === null ? '' : String(value).trim();
+}
+
+function fail(step, error) {
+  return { ok: false, step, error };
+}
+
+function codeOf(error) {
+  const code = Number(error && error.code);
+  return Number.isFinite(code) && code > 0 ? code : null;
+}
+
+function statusOf(error) {
+  const status = Number(error && error.status);
+  return Number.isFinite(status) ? status : null;
+}
+
+/**
+ * 昵称只是锦上添花：网关响应里顺手有就带上，没有就整个 key 省掉。
+ * 不为它多打一个接口、更不因此判定验证失败。
+ */
+export function nicknameOf(payload) {
+  if (!payload || typeof payload !== 'object') return '';
+  const candidates = [
+    payload.bot && payload.bot.username,
+    payload.bot && payload.bot.nickname,
+    payload.data && payload.data.bot && payload.data.bot.username,
+    payload.d && payload.d.bot && payload.d.bot.username,
+    payload.username,
+    payload.nickname
+  ];
+  for (const raw of candidates) {
+    const value = textOf(raw);
+    if (value !== '') return value;
+  }
+  return '';
+}
+
+// token 阶段的失败分两类：开放平台明确回了业务码（凭证问题），或根本没连上（网络问题）。
+// 混成一类会让"网线没插"的人跑去重置密钥，白折腾一轮。
+function tokenFailure(error) {
+  const code = codeOf(error);
+  const message = textOf(error && error.message) || '未知错误';
+  if (code !== null) return fail('credentials', MSG_SECRET_WRONG + '（开放平台返回错误码 ' + code + '）');
+  if (message.includes('access_token') || message.includes('不是 JSON')) {
+    return fail('credentials', MSG_SECRET_WRONG + '（开放平台没给出 access_token：' + message + '）');
+  }
+  return fail('unknown', '连不上 QQ 开放平台：' + message + '；先确认这台电脑能上网（或代理可用），再点一次');
+}
+
+function gatewayFailure(error, sandbox) {
+  const code = codeOf(error);
+  const status = statusOf(error);
+  const message = textOf(error && error.message) || '未知错误';
+  if (status === 401 || status === 403 || (code !== null && AUTH_ERROR_CODES.has(code))) {
+    return fail('credentials', MSG_SECRET_WRONG);
+  }
+  if (status === 404 || (code !== null && ENV_ERROR_CODES.has(code))) {
+    const detail = code !== null ? '错误码 ' + code : 'HTTP ' + status;
+    return fail('sandbox', MSG_UNPUBLISHED + '（' + detail + (sandbox === true ? '，沙箱域' : '，正式域') + '）');
+  }
+  const detail = code !== null ? '错误码 ' + code : status !== null && status > 0 ? 'HTTP ' + status : message;
+  return fail('gateway', '网关连不上：' + detail + '；确认机器人状态和「沙箱环境」开关一致后再试');
+}
+
+/**
+ * 纯逻辑 + 注入 fetch：HTTP 恒 200 由调用方负责，这里只回 {ok, ...}。
+ * 成功 = {ok:true, nickname?, appId, sandbox}；失败 = {ok:false, step, error}，step ∈ credentials|sandbox|gateway|unknown。
+ */
+export async function verifyQqBotCredentials({
+  appId = '',
+  appSecret = '',
+  sandbox = false,
+  fetchImpl = globalThis.fetch
+} = {}) {
+  const id = textOf(appId);
+  const secret = textOf(appSecret);
+  if (id === '') return fail('credentials', MSG_APPID_EMPTY);
+  if (secret === '') return fail('credentials', MSG_SECRET_EMPTY);
+  // 新的 provider 实例 = 没有缓存，force 只是把"每次验证都真的问一次平台"写实
+  const provider = createTokenProvider({ appId: id, clientSecret: secret, apiBase: TOKEN_API_BASE, fetchImpl });
+  try {
+    await provider.getToken({ force: true });
+  } catch (error) {
+    return tokenFailure(error);
+  }
+
+  const base = sandbox === true ? SANDBOX_API_BASE : TOKEN_API_BASE;
+  let gatewayUrl = '';
+  let nickname = '';
+  try {
+    const client = createQqBotClient({ config: { apiBase: base }, tokenProvider: provider, fetchImpl });
+    const gateway = await client.getGateway();
+    gatewayUrl = textOf(gateway && gateway.url);
+    nickname = nicknameOf(gateway && gateway.raw);
+  } catch (error) {
+    return gatewayFailure(error, sandbox === true);
+  }
+  if (gatewayUrl === '') {
+    return fail('gateway', '网关没给出接入地址：机器人可能还没上线，确认机器人状态和「沙箱环境」开关一致后再试');
+  }
+
+  const result = { ok: true, appId: id, sandbox: sandbox === true };
+  if (nickname !== '') result.nickname = nickname;
+  return result;
+}
+
+export function createApiHandler({ configStore, runtime, logger = null, now = () => Date.now(), fetchImpl } = {}) {
   if (!configStore || typeof configStore.read !== 'function') throw new Error('createApiHandler: 需要 configStore');
   if (!runtime || typeof runtime.status !== 'function') throw new Error('createApiHandler: 需要 runtime');
 
@@ -155,6 +280,39 @@ export function createApiHandler({ configStore, runtime, logger = null, now = ()
     return sendJson(res, { ok: false, error: (result && result.error) || '发送测试消息失败' });
   }
 
+
+  // 「连接向导」第 2 步：body 里带的就是向导输入框里的值，没带的用已保存配置兜底，
+  // 于是用户既能"先验证再保存"，也不必把已经存过的密钥重打一遍。
+  async function postVerifyCredentials(req, res) {
+    const type = String(req?.headers?.['content-type'] ?? '').toLowerCase();
+    if (!type.includes('application/json')) {
+      return sendJson(res, { ok: false, error: 'content-type 必须是 application/json' });
+    }
+    const body = await readJson(req);
+    if (!body.ok) return sendJson(res, { ok: false, error: body.error });
+    const value = body.value && typeof body.value === 'object' && !Array.isArray(body.value) ? body.value : {};
+    for (const key of ['appId', 'appSecret']) {
+      if (value[key] !== undefined && value[key] !== null && typeof value[key] !== 'string') {
+        return sendJson(res, { ok: false, error: key + ' 必须是字符串' });
+      }
+    }
+    if (value.sandbox !== undefined && value.sandbox !== null && typeof value.sandbox !== 'boolean') {
+      return sendJson(res, { ok: false, error: 'sandbox 必须是 true/false' });
+    }
+
+    const saved = configStore.read().config ?? {};
+    const official = saved.qqOfficial ?? {};
+    const incomingSecret = textOf(value.appSecret);
+    const result = await verifyQqBotCredentials({
+      appId: textOf(value.appId) || textOf(official.appId),
+      // *** 是掩码，不是密钥：拿它去换 token 只会换回一条假错误
+      appSecret: incomingSecret !== '' && incomingSecret !== SECRET_MASK ? incomingSecret : textOf(official.appSecret),
+      sandbox: typeof value.sandbox === 'boolean' ? value.sandbox : official.sandbox === true,
+      fetchImpl
+    });
+    return sendJson(res, result);
+  }
+
   async function getLogsTail(url, res) {
     const view = configStore.read();
     const target = resolveLogFile(view.config, { file: url.searchParams.get('file') ?? '', now: now() });
@@ -207,6 +365,10 @@ export function createApiHandler({ configStore, runtime, logger = null, now = ()
       if (method !== 'POST') return sendJson(res, { ok: false, error: '只接受 POST /test-send' });
       return postTestSend(req, res);
     }
+    if (suffix === '/verify-credentials') {
+      if (method !== 'POST') return sendJson(res, { ok: false, error: '只接受 POST /verify-credentials' });
+      return postVerifyCredentials(req, res);
+    }
     if (suffix === '/logs/tail') {
       if (method !== 'GET') return sendJson(res, { ok: false, error: '只接受 GET /logs/tail' });
       return getLogsTail(url, res);
@@ -230,6 +392,6 @@ export function createApiHandler({ configStore, runtime, logger = null, now = ()
 }
 
 /** 契约 §3：一个 kind:'prefix' 路由挂在 /dsh-bot/api。 */
-export function createApiRoutes({ configStore, runtime, logger = null, now = () => Date.now() } = {}) {
-  return { kind: 'prefix', path: API_PREFIX, handler: createApiHandler({ configStore, runtime, logger, now }) };
+export function createApiRoutes({ configStore, runtime, logger = null, now = () => Date.now(), fetchImpl } = {}) {
+  return { kind: 'prefix', path: API_PREFIX, handler: createApiHandler({ configStore, runtime, logger, now, fetchImpl }) };
 }

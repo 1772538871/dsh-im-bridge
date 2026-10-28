@@ -51,7 +51,7 @@ export function createQqBotClient({
   const wanted = Number(config.requestTimeoutMs);
   const timeoutMs = Number.isFinite(wanted) && wanted > 0 ? wanted : DEFAULT_TIMEOUT_MS;
 
-  async function send(method, path, { body = null, query = null, headers = {}, auth = true } = {}) {
+  async function send(method, path, { body = null, form = null, query = null, headers = {}, auth = true } = {}) {
     if (typeof fetchImpl !== 'function') throw new QqBotError('运行环境没有可用的 fetch', { method, path });
     const url = new URL(base + path);
     if (query) {
@@ -65,7 +65,10 @@ export function createQqBotClient({
       if (!tokenProvider) throw new QqBotAuthError('缺少 token provider', {});
       init.headers.authorization = await tokenProvider.authHeader();
     }
-    if (body !== null && body !== undefined) {
+    if (form !== null && form !== undefined) {
+      // multipart 的 boundary 由运行时自己写，这里绝不能手动设 content-type
+      init.body = form;
+    } else if (body !== null && body !== undefined) {
       init.headers['content-type'] = 'application/json; charset=utf-8';
       init.body = JSON.stringify(body);
     }
@@ -149,6 +152,19 @@ export function createQqBotClient({
       if (!url) throw new QqBotError('上传富媒体需要可公网访问的 url');
       const path = '/v2/' + targetKind(chatType) + '/' + encodeURIComponent(id) + '/files';
       return request('POST', path, { body: { file_type: Number(fileType), url } });
+    },
+
+    // 本地文件只能走表单：官方 /files 除了 {url} 还收 multipart，两者是同一个端点。
+    async uploadFileContent({ chatType = 'private', target, fileType = 4, filename = '', bytes = null } = {}) {
+      const id = requireId(target, chatType === 'group' ? 'group_openid' : 'user_openid');
+      const content = Buffer.isBuffer(bytes) ? bytes : bytes ? Buffer.from(bytes) : null;
+      if (!content || content.length === 0) throw new QqBotError('上传富媒体需要文件内容');
+      const form = new FormData();
+      form.append('file_type', String(Number(fileType)));
+      form.append('srv_send_msg', 'false');
+      form.append('file', new Blob([content]), String(filename || 'file'));
+      const path = '/v2/' + targetKind(chatType) + '/' + encodeURIComponent(id) + '/files';
+      return request('POST', path, { form });
     },
 
     // pipeline 的 resolveUrl 只会拿 plan.callSpec.action 来调；QQ 侧附件都自带直链，

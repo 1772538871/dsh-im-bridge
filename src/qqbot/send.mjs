@@ -1,5 +1,7 @@
 // 回复发送：切段逻辑与 OneBot 完全一致（复用 chunkText），差别只在协议——
 // QQ 被动回复必须带 msg_id，且同一 msg_id 下 msg_seq 必须递增，否则平台按重复消息丢弃。
+import { readFile } from 'node:fs/promises';
+import { basename } from 'node:path';
 import { chunkText } from '../onebot/send.mjs';
 
 const DEFAULT_MAX_CHARS = 1500;
@@ -106,4 +108,95 @@ export async function sendQqReply({ client, message, text, config = {}, logger =
     }
   }
   return { sent, failed };
+}
+
+// 富媒体消息的 msg_type 固定 7；file_type 按内容分类（1=图片、4=文件）
+const FILE_TYPE_IMAGE = 1;
+const FILE_TYPE_FILE = 4;
+const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp)$/i;
+
+export function qqFileTypeOf(filename) {
+  return IMAGE_EXT.test(String(filename ?? '')) ? FILE_TYPE_IMAGE : FILE_TYPE_FILE;
+}
+
+function pickFileInfo(uploaded) {
+  const raw = uploaded?.file_info ?? uploaded?.data?.file_info ?? '';
+  return typeof raw === 'string' ? raw.trim() : '';
+}
+
+/**
+ * 出站文件：先上传拿 file_info，再发 msg_type=7 的富媒体消息。
+ * 被动回复仍要带 msg_id + 递增 msg_seq，否则平台按重复消息静默丢掉。
+ */
+export async function sendQqFile({ client, message, path: filePath = '', config = {}, logger = null } = {}) {
+  const wanted = typeof filePath === 'string' ? filePath.trim() : '';
+  const chatType = message?.chatType === 'group' ? 'group' : 'private';
+  const target = chatType === 'group' ? message?.groupId : message?.userId;
+
+  if (wanted === '') {
+    warn(logger, '发文件缺少路径', { chatType });
+    return { sent: 0, failed: 1 };
+  }
+  if (!target) {
+    warn(logger, '缺少发送目标，放弃发文件', { chatType });
+    return { sent: 0, failed: 1 };
+  }
+  if (typeof client?.uploadFileContent !== 'function' || typeof client?.sendMessage !== 'function') {
+    warn(logger, 'client 不支持富媒体上传，放弃发文件', { chatType });
+    return { sent: 0, failed: 1 };
+  }
+
+  const name = basename(wanted);
+  let bytes = null;
+  try {
+    bytes = await readFile(wanted);
+  } catch (error) {
+    warn(logger, '读不到要发的文件', { path: wanted, error: String(error?.message ?? error) });
+    return { sent: 0, failed: 1 };
+  }
+
+  let fileInfo = '';
+  try {
+    const uploaded = await client.uploadFileContent({
+      chatType,
+      target,
+      fileType: qqFileTypeOf(name),
+      filename: name,
+      bytes,
+    });
+    fileInfo = pickFileInfo(uploaded);
+  } catch (error) {
+    warn(logger, 'QQ 富媒体上传失败', { path: wanted, error: String(error?.message ?? error) });
+    return { sent: 0, failed: 1 };
+  }
+  if (!fileInfo) {
+    warn(logger, 'QQ 富媒体上传没有返回 file_info', { path: wanted });
+    return { sent: 0, failed: 1 };
+  }
+
+  const messageId = typeof message?.messageId === 'string' ? message.messageId : '';
+  const body = { msg_type: 7, media: { file_info: fileInfo } };
+  if (messageId) {
+    body.msg_id = messageId;
+    body.msg_seq = nextSeq(messageId);
+  }
+
+  try {
+    await client.sendMessage({ chatType, target, body });
+    return { sent: 1, failed: 0 };
+  } catch (error) {
+    // 被动回复的 msg_id 会过期，被拒时退化成主动消息再发一次，别让文件直接丢
+    if (messageId && isPassiveRejection(error)) {
+      try {
+        await client.sendMessage({ chatType, target, body: { msg_type: 7, media: { file_info: fileInfo } } });
+        warn(logger, '富媒体被动回复被拒，已改用主动消息送达', { error: String(error?.message ?? error).slice(0, 200) });
+        return { sent: 1, failed: 0 };
+      } catch (fallbackError) {
+        warn(logger, 'QQ Bot 发文件失败（主动消息也失败）', { error: String(fallbackError?.message ?? fallbackError).slice(0, 200) });
+        return { sent: 0, failed: 1 };
+      }
+    }
+    warn(logger, 'QQ Bot 发文件失败', { error: String(error?.message ?? error).slice(0, 200) });
+    return { sent: 0, failed: 1 };
+  }
 }

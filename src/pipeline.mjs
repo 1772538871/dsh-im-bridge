@@ -1,4 +1,5 @@
-import { join } from 'node:path';
+import { stat } from 'node:fs/promises';
+import { isAbsolute, join, posix, win32 } from 'node:path';
 import { transcribe as defaultTranscribe } from "./asr.mjs";
 import {
   commandExportDoneText,
@@ -15,6 +16,86 @@ import { buildPrompt } from "./prompt.mjs";
 import { createSessionBinding } from './session-binding.mjs';
 
 const DEFAULT_ERROR_PREFIX = "[bridge] ";
+const NO_TEXT_PLACEHOLDER = "（DSH 这次没有返回文字内容）";
+
+// 出站文件：一条回复最多带 3 个文件（再多平台会拒，用户一次也看不过来）
+const SENDFILE_LIMIT = 3;
+const DEFAULT_MAX_FILE_BYTES = 104857600;
+// 全角冒号也认：模型偶尔会把 : 写成 ：
+const SENDFILE_MARKER_SOURCE = "\\[\\[\\s*sendfile\\s*[:：]\\s*([^\\]\\n]+?)\\s*\\]\\]";
+const sendFileMarkerRe = () => new RegExp(SENDFILE_MARKER_SOURCE, "gi");
+// 跳过原因的顺序固定（测试与文案都依赖这个顺序），一次合并成一行人话
+const SENDFILE_SKIP = [
+  ["relative", "不是绝对路径"],
+  ["missing", "路径不存在"],
+  ["too_large", "超过大小上限"],
+  ["over_limit", "超过每轮上限（最多 3 个）"],
+];
+
+function normalizeNewlines(text) {
+  const source = typeof text === "string" ? text : text === null || text === undefined ? "" : String(text);
+  return source.replace(/\r\n?/g, "\n");
+}
+
+// 模型经常把路径裹在引号或反引号里；两侧空白也要吃掉，否则绝对路径判断会挂
+function cleanMarkerPath(raw) {
+  return String(raw ?? "").trim().replace(/^[`'"]+|[`'"]+$/g, "").trim();
+}
+
+function isAbsolutePath(path) {
+  // 宿主可能是 Windows 也可能是 Linux：两边都认，别让路径形态决定功能是否可用
+  return isAbsolute(path) || win32.isAbsolute(path) || posix.isAbsolute(path);
+}
+
+/** 按行套用标记替换：整行只剩标记的行直接丢掉，其余的只挖掉标记本身。 */
+function mapMarkerLines(text, replacer) {
+  const kept = [];
+  for (const line of normalizeNewlines(text).split("\n")) {
+    let touched = false;
+    const replaced = line.replace(sendFileMarkerRe(), (match, raw) => {
+      touched = true;
+      return replacer(cleanMarkerPath(raw), match);
+    });
+    if (!touched) {
+      kept.push(line);
+      continue;
+    }
+    const cleaned = replaced.replace(/^[`'"\s]+|[`'"\s]+$/g, "");
+    if (cleaned !== "") kept.push(cleaned);
+  }
+  return kept.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+/** 按出现顺序取出所有 [[sendfile: 路径]]；重复项留给调用方去重。 */
+export function extractSendFilePaths(text) {
+  const source = normalizeNewlines(text);
+  const paths = [];
+  for (const match of source.matchAll(sendFileMarkerRe())) {
+    const path = cleanMarkerPath(match[1]);
+    if (path !== "") paths.push(path);
+  }
+  return paths;
+}
+
+/** 把标记从正文里拿掉：只含标记的行整行消失，标记夹在句子里就只删标记。 */
+export function stripSendFileMarkers(text) {
+  return mapMarkerLines(text, () => "");
+}
+
+/** 平台没有发文件能力时的降级形态：标记换成纯路径，用户至少知道文件在哪。 */
+export function markersToPaths(text) {
+  return mapMarkerLines(text, (path) => path);
+}
+
+/** 发送一个文件算不算失败：抛错由调用方接，这里只读返回值。 */
+function fileSendFailed(outcome) {
+  if (!outcome || typeof outcome !== "object") return false;
+  if (outcome.ok === false) return true;
+  const sent = Number(outcome.sent);
+  const failed = Number(outcome.failed);
+  if (Number.isFinite(sent) && sent > 0) return false;
+  return Number.isFinite(failed) && failed > 0;
+}
 
 // 只写人话、不带任何堆栈：这些字符串会被直接发到 QQ
 const REASON_TEXT = {
@@ -37,6 +118,7 @@ async function loadDefaultDeps(names) {
     parseEvent: () => import("./onebot/parse.mjs").then((mod) => mod.parseEvent),
     planMedia: () => import("./onebot/media.mjs").then((mod) => mod.planMedia),
     sendReply: () => import("./onebot/send.mjs").then((mod) => mod.sendReply),
+    sendFile: () => import("./onebot/send.mjs").then((mod) => mod.sendFile),
   };
   const resolved = {};
   await Promise.all(
@@ -124,6 +206,10 @@ export function createPipeline({
   const resolveDeps = () => {
     const injected = deps ?? {};
     const missing = CORE_DEPS.filter((name) => typeof injected[name] !== "function");
+    // sendFile 只在调用方完全没注入 deps 时补 OneBot 默认实现（命令行那条路）。
+    // 注入了 deps 的一方自己负责这张能力表：缺 sendFile = 这个平台不发文件，
+    // 由 sendMarkedFiles 降级成文字路径，而不是报错。
+    if (deps == null) missing.push("sendFile");
     depsPromise ??= (missing.length === 0 ? Promise.resolve({}) : loadDefaultDeps(missing)).then((base) => ({
       transcribe: defaultTranscribe,
       ...base,
@@ -155,6 +241,92 @@ export function createPipeline({
       logger?.error?.("发送回复失败", { error: String(error?.message ?? error) });
       return { sent: 0, failed: 1 };
     }
+  }
+
+  function maxFileBytes() {
+    const fromStorage = Number(storage?.maxFileBytes);
+    if (Number.isFinite(fromStorage) && fromStorage > 0) return fromStorage;
+    const fromConfig = Number(config?.storage?.maxFileBytes);
+    return Number.isFinite(fromConfig) && fromConfig > 0 ? Math.floor(fromConfig) : DEFAULT_MAX_FILE_BYTES;
+  }
+
+  /**
+   * 出站文件：把回复正文里的 [[sendfile: 路径]] 变成真正发送出去的文件。
+   * 校验不过的、超上限的、发失败的都不抛，只在正文末尾补一行人话。
+   */
+  async function sendMarkedFiles({ message, text, resolved }) {
+    const paths = extractSendFilePaths(text);
+    if (paths.length === 0) return { text: stripSendFileMarkers(text), sent: 0, failed: 0, skipped: 0 };
+
+    const sendFile = resolved?.sendFile;
+    if (typeof sendFile !== "function") {
+      // 这个平台没有发文件能力：降级成"只回文字路径"，不失败
+      logger?.debug?.("当前平台没有 sendFile，标记降级为文字路径", { count: paths.length });
+      return { text: markersToPaths(text), sent: 0, failed: 0, skipped: 0 };
+    }
+
+    const limit = maxFileBytes();
+    const skipped = new Map();
+    const accepted = [];
+    const seen = new Set();
+    const bump = (key) => skipped.set(key, (skipped.get(key) ?? 0) + 1);
+    for (const path of paths) {
+      // 同一路径写两遍只发一次：模型常在结尾把同一个文件再列一遍
+      if (seen.has(path)) continue;
+      seen.add(path);
+      if (!isAbsolutePath(path)) {
+        bump("relative");
+        continue;
+      }
+      let info = null;
+      try {
+        info = await stat(path);
+      } catch {
+        info = null; // 不存在或没权限都算"拿不到"，细因只在日志里
+      }
+      if (!info?.isFile()) {
+        bump("missing");
+        continue;
+      }
+      if (info.size > limit) {
+        bump("too_large");
+        continue;
+      }
+      if (accepted.length >= SENDFILE_LIMIT) {
+        bump("over_limit");
+        continue;
+      }
+      accepted.push(path);
+    }
+
+    let sent = 0;
+    let failed = 0;
+    for (const path of accepted) {
+      try {
+        const outcome = await sendFile({ client, message, path, config, logger });
+        if (fileSendFailed(outcome)) {
+          failed += 1;
+          logger?.warn?.("发送文件失败", { path, sent: outcome?.sent, failed: outcome?.failed });
+        } else {
+          sent += 1;
+        }
+      } catch (error) {
+        failed += 1;
+        logger?.warn?.("发送文件失败", { path, error: String(error?.message ?? error) });
+      }
+    }
+
+    const notes = [];
+    for (const [key, label] of SENDFILE_SKIP) {
+      const count = skipped.get(key) ?? 0;
+      if (count > 0) notes.push(`⚠️ 跳过了 ${count} 个文件：${label}`);
+    }
+    if (failed > 0) notes.push(`⚠️ ${failed} 个文件发送失败`);
+
+    const body = stripSendFileMarkers(text);
+    const head = body !== "" ? body : sent > 0 ? `已发送 ${sent} 个文件` : "";
+    const skippedCount = [...skipped.values()].reduce((sum, n) => sum + n, 0);
+    return { text: [head, ...notes].filter((line) => line !== "").join("\n"), sent, failed, skipped: skippedCount };
   }
 
   async function resolveUrl({ plan }) {
@@ -439,8 +611,13 @@ export function createPipeline({
             if (result.rebound === true) {
               logger?.warn?.("会话写句柄一直被占用，已换新会话继续", { chatKey, sessionId: result.sessionId });
             }
-            let text = typeof result.text === "string" ? result.text.trim() : "";
-            if (text === "") text = "（DSH 这次没有返回文字内容）";
+            // 先发正文里点名的文件、再清理标记，最后才发这一段文字
+            const files = await sendMarkedFiles({
+              message,
+              text: typeof result.text === "string" ? result.text : "",
+              resolved,
+            });
+            let text = files.text === "" ? NO_TEXT_PLACEHOLDER : files.text;
             if (config?.reply?.showSessionId && result.sessionId) text += `\n[session ${result.sessionId}]`;
             await deliver(message, text);
             counters.handled += 1;

@@ -37,6 +37,8 @@ export function buildPrompt({ config, message, savedAttachments = [], voiceTrans
     "- 只输出纯文本，不要使用 Markdown 表格、代码围栏或加粗标记，QQ 不渲染它们。",
     "- 排版用短行 + 空行分段；列举用「· 」开头，不要用 - 或 ###；一条回复别超过 15 行。",
     `- 尽量简短，控制在 ${chunkLimit} 字以内；超出会被自动分段发送。`,
+    "- 需要把本机文件发给用户时（例如对方说「把结果发我」），在正文里单独一行写 [[sendfile: 文件的绝对路径]]。",
+    "- 这种标记最多 3 行；路径必须是真实存在的绝对路径，写错或超限的文件会被跳过，正文照常发送。",
   ];
 
   if (attachments.length > 0) {

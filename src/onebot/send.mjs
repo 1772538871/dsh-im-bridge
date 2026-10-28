@@ -1,4 +1,8 @@
 // 回复切分与发送：QQ 单条消息有长度上限，必须先切段，再逐段发。
+import { basename } from 'node:path';
+import { pathToFileURL } from 'node:url';
+
+const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp)$/i;
 
 const DEFAULT_MAX_CHARS = 1500;
 // 句末标点（中英文）之后切一刀；零宽前瞻保证标点留在前一段里。
@@ -142,4 +146,57 @@ export async function sendReply({ client, message, text, config = {}, logger = n
     }
   }
   return { sent, failed };
+}
+
+/**
+ * 出站文件：优先用消息段直传（image/file 段），失败再退回上传接口。
+ * 不同实现（NapCat / go-cqhttp）对 file 段的支持并不一致，两条路都留着才不会"发不出去"。
+ */
+export async function sendFile({ client, message, path: filePath = '', config = {}, logger = null } = {}) {
+  const chatType = message?.chatType === 'group' ? 'group' : 'private';
+  const idKey = chatType === 'group' ? 'group_id' : 'user_id';
+  const target = String((chatType === 'group' ? message?.groupId : message?.userId) ?? '');
+  const wanted = typeof filePath === 'string' ? filePath.trim() : '';
+
+  if (wanted === '') {
+    warn(logger, '发文件缺少路径', { chatType });
+    return { sent: 0, failed: 1 };
+  }
+  if (!target) {
+    warn(logger, '缺少发送目标，放弃发文件', { chatType });
+    return { sent: 0, failed: 1 };
+  }
+  if (typeof client?.call !== 'function') {
+    warn(logger, 'client 不支持 call，放弃发文件', { chatType });
+    return { sent: 0, failed: 1 };
+  }
+
+  const name = basename(wanted);
+  // NapCat 认 file:// 绝对路径；裸 Windows 路径会被某些实现按相对路径重新解释
+  let fileUrl = wanted;
+  try {
+    fileUrl = pathToFileURL(wanted).href;
+  } catch {
+    fileUrl = wanted;
+  }
+  const segment = IMAGE_EXT.test(name)
+    ? { type: 'image', data: { file: fileUrl } }
+    : { type: 'file', data: { file: fileUrl, name } };
+  const action = chatType === 'group' ? 'send_group_msg' : 'send_private_msg';
+
+  try {
+    await client.call(action, { [idKey]: target, message: [segment] });
+    return { sent: 1, failed: 0 };
+  } catch (error) {
+    warn(logger, '消息段直传文件失败，改走上传接口', { action, error: String(error?.message ?? error) });
+  }
+
+  const upload = chatType === 'group' ? 'upload_group_file' : 'upload_private_file';
+  try {
+    await client.call(upload, { [idKey]: target, file: wanted, name });
+    return { sent: 1, failed: 0 };
+  } catch (error) {
+    warn(logger, upload + ' 上传文件失败', { error: String(error?.message ?? error) });
+    return { sent: 0, failed: 1 };
+  }
 }

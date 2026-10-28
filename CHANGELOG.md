@@ -2,6 +2,18 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，语义化版本。
 
+## [0.6.0] - 2026-10-23
+
+### 新增
+- **连接向导（三步点通）**：设置页顶部三步卡片 —— 打开开放平台 / 填凭证并验证 / 发测试消息。
+  新增 `POST /dsh-bot/api/verify-credentials`：token 走正式域、`/gateway` 二次确认，失败按 `credentials|sandbox|gateway|unknown` 分级给人话（断网不会被误报成"密钥错"）。
+- **把文件发回 QQ**：回复正文里单独一行写 `[[sendfile: <绝对路径>]]`，会把文件按平台能力发出去
+  （QQ 官方走 `/files` multipart 上传 + `msg_type=7`；OneBot 走 image/file 段）。
+  最多 3 个；不存在的路径、超过大小上限、发送失败都只追加一行说明，绝不中断回复；缺 `sendFile` 依赖时降级成文字路径。
+
+### 兼容
+- DSH `0.2.1-rc.4` 已验证（全量 348 项测试通过），加入兼容表。
+
 ## [0.5.0] - 2026-10-23
 
 ### 新增
