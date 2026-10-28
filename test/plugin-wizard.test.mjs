@@ -506,6 +506,68 @@ test('渲染: NapCat 平台第一步换成 6099，且不显示 AppID/AppSecret �
   assert.equal(findAll(element, (n) => n.type === 'button' && textOf(n) === '验证凭证').length, 0);
 });
 
+// ---- 二维码：宿主下发 SVG 就贴图，没下发就退回占位方块 ----
+
+const QR_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 37 37"><rect x="1" y="1" width="1" height="1"/></svg>';
+
+function stateWithQr(wizardQr) {
+  const base = loadClient().exports;
+  return {
+    ...base.createInitialState(),
+    ...base.snapshotFrom({ platforms: PLATFORMS, wizardQr }, { config: OFFICIAL_CONFIG, configPath: 'X' }),
+    loading: false
+  };
+}
+
+function findInjectedSvg(element) {
+  return findAll(element, (n) => n.props && n.props.dangerouslySetInnerHTML && typeof n.props.dangerouslySetInnerHTML.__html === 'string');
+}
+
+test('渲染: 有 wizardQr 时原样贴出二维码 SVG，「打开开放平台」和「复制链接」都还在', () => {
+  const { exports } = loadClient(stateWithQr({ 'qq-official': QR_SVG }));
+  const element = exports.DshBotSection({ close: () => {} });
+
+  const injected = findInjectedSvg(element);
+  assert.equal(injected.length, 1, '二维码 SVG 必须注入且只注入一次');
+  assert.equal(injected[0].props.dangerouslySetInnerHTML.__html, QR_SVG);
+  const anchors = findAll(element, (n) => n.type === 'a');
+  assert.equal(anchors.length, 1, '扫不了码的人还得能点按钮');
+  assert.equal(anchors[0].props.href, 'https://q.qq.com/qqbot/#/developer');
+  assert.ok(textOf(anchors[0]).includes('打开开放平台'));
+  assert.equal(findAll(element, (n) => n.type === 'button' && textOf(n) === '复制链接').length, 1);
+});
+
+test('渲染: 没有 wizardQr 时退回占位方块，不白屏也不报错', () => {
+  for (const wizardQr of [undefined, {}, { 'qq-napcat': QR_SVG }]) {
+    const { exports } = loadClient(stateWithQr(wizardQr));
+    const element = exports.DshBotSection({ close: () => {} });
+    assert.equal(findInjectedSvg(element).length, 0, '官方平台不该拿到 NapCat 的二维码');
+    const text = textOf(element);
+    assert.ok(text.includes('连接向导（三步点通）'), text);
+    assert.ok(text.includes('打开开放平台'), text);
+    assert.ok(text.includes('https://q.qq.com/qqbot/#/developer'), text);
+  }
+});
+
+test('snapshotFrom: 不是 SVG、或带脚本/事件属性的下发值直接丢掉', () => {
+  const base = loadClient().exports;
+  const dirty = base.snapshotFrom(
+    {
+      platforms: PLATFORMS,
+      wizardQr: {
+        'qq-official': '<svg onload="alert(1)"></svg>',
+        'qq-napcat': '<img src=x onerror=alert(1)>',
+        evil: '<svg><script>alert(1)</script></svg>'
+      }
+    },
+    { config: OFFICIAL_CONFIG, configPath: 'X' }
+  );
+  // client 跑在 vm 上下文里，对象原型与本地不同，只能按 key 比
+  assert.deepEqual(Object.keys(dirty.wizardQr), []);
+  const good = base.snapshotFrom({ platforms: PLATFORMS, wizardQr: { 'qq-official': '  ' + QR_SVG + '  ' } }, { config: OFFICIAL_CONFIG });
+  assert.equal(good.wizardQr['qq-official'], QR_SVG);
+});
+
 // ---- 交互：真按按钮、真发请求（有状态假 React） ----
 
 function makeInteractiveReact() {

@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { SECRET_MASK, maskSecrets, mergeSecretMasks, resolveLogFile } from './config-store.mjs';
 import { listPlatforms } from './platforms.mjs';
+import { encodeQr, qrToSvg } from '../../lib/qr.js';
 import { createTokenProvider } from '../qqbot/auth.mjs';
 import { createQqBotClient } from '../qqbot/client.mjs';
 
@@ -12,6 +13,32 @@ const CONTROL_ACTIONS = ['start', 'stop', 'restart'];
 // token 接口只在正式域提供（沙箱域实测 404），网关二次确认才跟着 sandbox 开关走沙箱域
 export const TOKEN_API_BASE = 'https://api.bot.qq.com';
 export const SANDBOX_API_BASE = 'https://sandbox.api.sgroup.qq.com';
+// 向导卡「扫码」块的二维码内容：必须是真能在手机上打开的那个地址
+export const WIZARD_QR_TARGETS = {
+  'qq-official': 'https://q.qq.com/qqbot/#/developer',
+  'qq-napcat': 'http://127.0.0.1:6099'
+};
+
+// 二维码在宿主侧算好随 /platforms 下发：lib/client.js 是单文件包，引不到 lib/qr.js。
+// 单个平台编码失败就省略该键——二维码坏了不该把整个设置页的接口拖成 500。
+export function buildWizardQr(targets) {
+  const out = {};
+  for (const [platform, url] of Object.entries(targets)) {
+    try {
+      out[platform] = qrToSvg(encodeQr(url).modules, { size: 200, margin: 4 });
+    } catch {
+      // 省略该键：前端会退回占位方块
+    }
+  }
+  return out;
+}
+
+let wizardQrCache = null;
+
+export function wizardQrPayload() {
+  if (wizardQrCache === null) wizardQrCache = buildWizardQr(WIZARD_QR_TARGETS);
+  return wizardQrCache;
+}
 
 function errorText(error) {
   return error && error.message ? String(error.message) : String(error);
@@ -359,7 +386,7 @@ export function createApiHandler({ configStore, runtime, logger = null, now = ()
     }
     if (suffix === '/platforms') {
       if (method !== 'GET') return sendJson(res, { ok: false, error: '只接受 GET /platforms' });
-      return sendJson(res, { ok: true, platforms: listPlatforms() });
+      return sendJson(res, { ok: true, platforms: listPlatforms(), wizardQr: wizardQrPayload() });
     }
     if (suffix === '/test-send') {
       if (method !== 'POST') return sendJson(res, { ok: false, error: '只接受 POST /test-send' });

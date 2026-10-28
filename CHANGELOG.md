@@ -2,6 +2,19 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，语义化版本。
 
+## [0.8.0] - 2026-10-23
+
+### 新增
+- **接入向导里的真二维码**：宿主侧新增 `lib/qr.js`（零依赖，字节模式 + 纠错 M + 版本 1–10），
+  `GET /platforms` 响应新增 `wizardQr`（开放平台链接与 NapCat 面板各一张内联 SVG），客户端把 SVG 注入向导卡。
+- 编码失败只省略 `wizardQr` 键，接口不报错；客户端拿不到 SVG 就退回原占位（不会白屏）。
+- 移植自 `qrcode-generator`（Kazuhiko Arase, MIT），版权与裁剪说明见 `THIRD_PARTY_NOTICES.md`。
+
+### 验证
+- 两条真实 URL 编码为 v3/29（mask 4）与 v2/25（mask 3），并用 jsQR 独立解码回原文；
+- 另在真 Chromium 里把生成的 SVG 画到 canvas 再解码，两条 URL 均还原。
+- 测试 398 → 418。
+
 ## [0.7.0] - 2026-10-23
 
 ### 变更
