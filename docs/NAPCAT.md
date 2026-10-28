@@ -10,6 +10,29 @@ dsh-im-bridge 不实现 QQ 协议，它说 OneBot 11。QQ 这一侧由 NapCat �
 
 > Windows 上 NapCat 通常需要一个可写的 `config` 目录；默认放在它自己的安装目录即可，**不要指向本项目的 `storage.rootDir`**，两者互不干扰。
 
+### 1.1 一键启动：让插件自己拉起 NapCat（顺带把登录二维码显示在设置页）
+
+设置页 → **dsh bot** → 平台「QQ 个人账号」→ 高级设置里有两项：
+
+| 字段 | 填什么 |
+| --- | --- |
+| `qqNapcat.homeDir` | NapCat 的**安装目录**（例如 `D:\NapCat`），必须是绝对路径且真实存在 |
+| `qqNapcat.port` | NapCat 的 WebSocket 端口，默认 `3001`，要和 `qqNapcat.wsUrl` 一致 |
+
+填好后回到「正在接入」那张卡片，点 **一键启动**：插件会在安装目录里按顺序找
+`launcher-win10.bat` → `launcher.bat` → `napcat.bat` → `NapCatWinBootMain.exe` → `napcat.mjs`，
+命中哪个就用哪个（`.bat` 走 `cmd /c`，`.mjs` 用宿主自己的 node），以 `detached` 方式拉起，不占用宿主。
+
+NapCat 会把登录二维码写到 `<安装目录>\napcat\cache\qrcode.png`（老版本是 `<安装目录>\cache\qrcode.png`）。
+卡片每 3 秒读一次这张图并显示在方块里——**用手机 QQ 扫它就行**，不用再去 NapCat 面板里找。
+
+- 二维码约 2 分钟过期，过期点「刷新二维码」；
+- 扫完并且这张图 60 秒没再更新，卡片会变成绿色 `✅ 已扫码登录`；
+- 然后填 `qqNapcat.accessToken`，点「检测连接」。
+
+> 「已登录」是**弱信号**（端口通 + 二维码文件 60 秒没更新）。真机没法验证的只有这一条判断，
+> 其余分支都有测试覆盖；拿不到就显示"—"，不会编一个"已登录"。
+
 ## 2. 打开 OneBot 11 正向 WebSocket
 
 NapCat 配置里找 **网络配置 → OneBot 11 → WebSocket 服务器**（正向 WS），填：

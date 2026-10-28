@@ -2,6 +2,20 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，语义化版本。
 
+## [0.9.5] - 2026-10-23
+
+### 新增（个人号：一键启动 + 扫码登录）
+- **一键启动 NapCat**：高级设置里填一次「NapCat 装在哪个目录」，之后在卡片上点「一键启动」即可拉起（自动识别
+  `launcher-win10.bat` / `launcher.bat` / `napcat.bat` / `NapCatWinBootMain.exe` / `napcat.mjs`，detached 启动、不占终端、重复点不会开第二个）。
+- **自动出码**：每 3 秒读 `<NapCat目录>/napcat/cache/qrcode.png`（回退 `<目录>/cache/qrcode.png`），把登录二维码直接画在原占位方块里，带刷新按钮。
+- **检测登录**：探测 `127.0.0.1:3001` + 二维码文件 60 秒未更新 → 状态变绿「已扫码登录」，并提示下一步填访问令牌。
+- 新增 4 条路由：`POST /napcat/start`、`GET /napcat/status`、`GET /napcat/qr`、`POST /napcat/stop`（全部恒 200，未配置时给人话）。
+- 不再把 GitHub 下载页当二维码；它只在"扫不了码"时作为备选按钮出现。
+
+### 说明
+- `loggedIn` 是弱信号（端口 + 二维码静默），NapCat 登录后若删除图片会显示 `null` —— 宁可停在"等待扫码"，也不误报已登录。
+- `POST /napcat/stop` 只结束由本插件启动的进程，不会碰你自己开的 NapCat。
+
 ## [0.9.4] - 2026-10-23
 
 ### 变更

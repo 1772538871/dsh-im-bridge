@@ -152,6 +152,14 @@ const PLATFORM_FIELDS = {
       group: 'basic',
       placeholder: '留空表示不验证'
     }),
+    field('qqNapcat.homeDir', 'NapCat 装在哪个目录（一键启动要用）', 'text', {
+      placeholder: 'D:\\NapCat',
+      help: '填了这里，向导里点「一键启动」就能把本机 NapCat 拉起来，登录二维码直接显示在上面，扫完码再填口令。'
+    }),
+    field('qqNapcat.port', 'NapCat 的 WebSocket 端口', 'number', {
+      placeholder: '3001',
+      help: '要和上面地址里的端口一致（默认 3001），一般不用改。'
+    }),
     field('qqNapcat.reconnectMinMs', '掉线后多久开始重连（毫秒）', 'number', { placeholder: '1000' }),
     field('qqNapcat.reconnectMaxMs', '重连最长等多久（毫秒，越等越久的上限）', 'number', { placeholder: '30000' })
   ],

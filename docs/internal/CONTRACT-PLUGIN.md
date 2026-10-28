@@ -50,7 +50,8 @@
   "reply": { "maxChunkChars": 1500, "errorPrefix": "[bridge] ", "showSessionId": false },
   "asr": { "command": "", "args": [], "timeoutMs": 60000 },
   "log": { "dir": "", "level": "info" },
-  "qqNapcat": { "wsUrl": "ws://127.0.0.1:3001", "accessToken": "", "reconnectMinMs": 1000, "reconnectMaxMs": 30000 },
+  "qqNapcat": { "wsUrl": "ws://127.0.0.1:3001", "accessToken": "", "homeDir": "", "port": 3001,
+                "reconnectMinMs": 1000, "reconnectMaxMs": 30000 },   // homeDir 空 = 不用一键启动；port = 探测/连的那个 3001
   "qqOfficial": { "appId": "", "appSecret": "", "sandbox": true },
   "dsh": { "nodePath": "", "binPath": "", "profile": "im-bridge", "cwd": "", "timeoutMs": 300000, "permissionMode": "workspace-write" }
 }
@@ -69,8 +70,14 @@ JSON 出入，全部 `Cache-Control: no-store`；写接口只接受 POST + `cont
 | GET `/platforms` | — | `{ok:true, platforms:[{id,label,description,fields:[{key,label,type,group,required,secret,placeholder,help}]}]}` |
 | POST `/test-send` | `{target?}` | `{ok:true, target, chunkCount}` 或 `{ok:false, error}`（未启动、找不到收件人、真的发不出去都走这里，**不抛**） |
 | GET `/logs/tail?lines=100` | — | `{ok:true, lines:[string]}`（读当前日志文件尾部，最多 500 行，路径越界一律拒绝） |
+| POST `/napcat/start` | `{}` | `{ok:true, pid, launcher, alreadyRunning}` 或 `{ok:false, error}` |
+| GET `/napcat/status` | — | `{ok:true, listening, loggedIn, homeDir, port, qrcodeAt?, qrcodeAgeMs?}`；`loggedIn` 取不到就是 `null` |
+| GET `/napcat/qr` | — | `{ok:true, dataUrl, mtimeMs}` 或 `{ok:false, error}`（`dataUrl` 是 `data:image/png;base64,…`） |
+| POST `/napcat/stop` | `{}` | `{ok:true, pid}` 或 `{ok:false, error}`（只结束本插件自己拉起的那个 pid） |
 
 `fields` 里 `key` 用点路径（如 `qqNapcat.wsUrl`），`type` ∈ `text|password|number|boolean|stringList|select`；`secret:true` 的字段在 `GET /config` 里必须以 `"***"` 掩码返回，POST 收到 `"***"` 表示"不修改"。
+
+`/napcat/*` 四条由 `src/plugin/napcat-launcher.mjs` 实现（依赖注入 fs/spawn/net/now/kill，于是真机上没装 NapCat 也能把每个分支验掉）：`start` 在 `qqNapcat.homeDir` 里按 `launcher-win10.bat` → `launcher.bat` → `napcat.bat` → `NapCatWinBootMain.exe` → `napcat.mjs` 取第一个存在的（`.bat` 走 `cmd /c`），`detached:true + stdio:'ignore' + shell:false` 拉起且不重复拉起；`qrcode` 只读 `<homeDir>/napcat/cache/qrcode.png` 或 `<homeDir>/cache/qrcode.png`（>100 字节才算数）；`loggedIn` 只是"端口通 + 二维码文件 60 秒没更新"的弱信号，取不到一律 `null`。未配置 `homeDir` 时四条都回同一句人话并保持 HTTP 200。
 
 `group` ∈ `basic|advanced`（缺省 `advanced`）：客户端只用它决定"首屏直接展开"还是"收进折叠区"。basic 组的口径是**新手必须看懂才能跑起来**的那几项（平台、谁能用、数据目录、收发测试消息的收件人、DSH 入口/profile、平台专属凭据），每个平台不超过 10 项；新增字段默认 advanced，想进首屏必须显式标注。
 
@@ -114,7 +121,9 @@ window.__ModuleLoader__.load({
 ## 6. 测试
 - `test/plugin-host.test.mjs`：用假的 req/res 对象打路由，覆盖 GET/POST config（合法、校验失败不落盘、secret 掩码往返、`***` 表示不改）、`/platforms` 字段表结构 + `group` 分组口径（basic ≤ 10 且各平台固定）、`/test-send`（未启动 / 找不到收件人 / 成功 / 发不出去）、`/status`、`/logs/tail` 的越界拒绝、control 幂等、配置文件损坏恢复、C 盘 warning。
 - `test/plugin-client.test.mjs`：不加载 DSH 运行时，用 stub 的 `window.__ModuleLoader__` 捕获 factory，断言 `exports.inject`/`exports.apply` 存在、`apply` 用假 ctx 时确实调用 `ctx.slots.register({name:'settings.section', id:'dsh-bot'})`、`order` 是数字、label 函数返回 'dsh bot'；再断言组件对"字段表 + 配置"的纯渲染工具函数（把 fetch 抽成可注入）产出的元素不抛。
-- 现有测试必须继续全绿（当前 257 个：`node --test`）。
+- `test/napcat-launcher.test.mjs`：一键启动器的全部分支（候选启动器挑选顺序、homeDir 缺失/不存在、spawn 参数 `detached`/`stdio ignore`/无 shell 拼接、重复 start 不重复拉起、端口已在监听不重复起、qrcode 两条路径回退与 >100 字节门槛、dataUrl 前缀、status 探测超时归零、stop 只杀自己的 pid）+ 四条路由的成功/未配置/方法不对/异常分支。
+- `test/napcat-client.test.mjs`：`describeNapcatPanel` 的三种方块形态与"绝不编已登录"、`readNapcatOnce`（注入时钟判过期）、`createNapcatWatcher`（注入假 fetch/定时器：进来先拉一次、3 秒一轮、stop 清定时器、卸载后迟到的响应丢弃），以及渲染出的 `<img src=dataUrl>`、占位与绿色方块。
+- 现有测试必须继续全绿（`node --test`）。
 
 ## 7. 不许做的事
 - 不改 `src/onebot/**`、`src/pipeline.mjs`、`src/config.mjs` 的既有签名（新增文件可以）。

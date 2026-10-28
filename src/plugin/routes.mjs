@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { SECRET_MASK, maskSecrets, mergeSecretMasks, resolveLogFile } from './config-store.mjs';
 import { listPlatforms } from './platforms.mjs';
+import { createNapcatLauncher } from './napcat-launcher.mjs';
 import { encodeQr, qrToSvg } from '../../lib/qr.js';
 import { createTokenProvider } from '../qqbot/auth.mjs';
 import { createQqBotClient } from '../qqbot/client.mjs';
@@ -224,9 +225,19 @@ export async function verifyQqBotCredentials({
   return result;
 }
 
-export function createApiHandler({ configStore, runtime, logger = null, now = () => Date.now(), fetchImpl } = {}) {
+export function createApiHandler({ configStore, runtime, logger = null, now = () => Date.now(), fetchImpl, launcher = null } = {}) {
   if (!configStore || typeof configStore.read !== 'function') throw new Error('createApiHandler: 需要 configStore');
   if (!runtime || typeof runtime.status !== 'function') throw new Error('createApiHandler: 需要 runtime');
+
+  // 一键启动的宿主半边：默认懒建一个进程级单例（自己拉起的 pid 必须跨请求记着，
+  // 每请求新建一个就等于每次都重新拉起 NapCat）。测试注入假件，绝不真的去 spawn。
+  let napcatLauncher = launcher;
+  function launcherForNapcat() {
+    if (napcatLauncher === null) {
+      napcatLauncher = createNapcatLauncher({ config: () => configStore.read().config, logger, now });
+    }
+    return napcatLauncher;
+  }
 
   const warn = (message, extra) => {
     try {
@@ -340,6 +351,26 @@ export function createApiHandler({ configStore, runtime, logger = null, now = ()
     return sendJson(res, result);
   }
 
+  // 一键启动/二维码这四条：结果全部是"宿主自己的人话"，连异常也翻译成 ok:false，
+  // 于是前端永远只按 ok 分支，HTTP 层始终 200（契约 §3）。
+  async function napcatCall(method, res) {
+    let result;
+    try {
+      const api = launcherForNapcat();
+      if (!api || typeof api[method] !== 'function') {
+        return sendJson(res, { ok: false, error: '当前宿主版本不支持一键启动 NapCat' });
+      }
+      result = await api[method]();
+    } catch (error) {
+      warn('dsh-bot NapCat 接口异常', { method, error: errorText(error) });
+      return sendJson(res, { ok: false, error: 'NapCat 操作失败：' + errorText(error) });
+    }
+    if (!result || typeof result !== 'object') {
+      return sendJson(res, { ok: false, error: 'NapCat 操作没有返回结果' });
+    }
+    return sendJson(res, result);
+  }
+
   async function getLogsTail(url, res) {
     const view = configStore.read();
     const target = resolveLogFile(view.config, { file: url.searchParams.get('file') ?? '', now: now() });
@@ -400,6 +431,22 @@ export function createApiHandler({ configStore, runtime, logger = null, now = ()
       if (method !== 'GET') return sendJson(res, { ok: false, error: '只接受 GET /logs/tail' });
       return getLogsTail(url, res);
     }
+    if (suffix === '/napcat/start') {
+      if (method !== 'POST') return sendJson(res, { ok: false, error: '只接受 POST /napcat/start' });
+      return napcatCall('start', res);
+    }
+    if (suffix === '/napcat/status') {
+      if (method !== 'GET') return sendJson(res, { ok: false, error: '只接受 GET /napcat/status' });
+      return napcatCall('status', res);
+    }
+    if (suffix === '/napcat/qr') {
+      if (method !== 'GET') return sendJson(res, { ok: false, error: '只接受 GET /napcat/qr' });
+      return napcatCall('qrcode', res);
+    }
+    if (suffix === '/napcat/stop') {
+      if (method !== 'POST') return sendJson(res, { ok: false, error: '只接受 POST /napcat/stop' });
+      return napcatCall('stop', res);
+    }
     return sendJson(res, { ok: false, error: '未知接口：' + url.pathname });
   }
 
@@ -419,6 +466,6 @@ export function createApiHandler({ configStore, runtime, logger = null, now = ()
 }
 
 /** 契约 §3：一个 kind:'prefix' 路由挂在 /dsh-bot/api。 */
-export function createApiRoutes({ configStore, runtime, logger = null, now = () => Date.now(), fetchImpl } = {}) {
-  return { kind: 'prefix', path: API_PREFIX, handler: createApiHandler({ configStore, runtime, logger, now, fetchImpl }) };
+export function createApiRoutes({ configStore, runtime, logger = null, now = () => Date.now(), fetchImpl, launcher = null } = {}) {
+  return { kind: 'prefix', path: API_PREFIX, handler: createApiHandler({ configStore, runtime, logger, now, fetchImpl, launcher }) };
 }

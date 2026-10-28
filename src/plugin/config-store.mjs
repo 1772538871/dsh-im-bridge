@@ -53,7 +53,8 @@ export const DEFAULT_CONFIG = {
   questions: { enabled: true },
   asr: { command: '', args: [], timeoutMs: 60000 },
   log: { dir: '', level: 'info' },
-  qqNapcat: { wsUrl: 'ws://127.0.0.1:3001', accessToken: '', reconnectMinMs: 1000, reconnectMaxMs: 30000 },
+  // homeDir 留空 = 没装/不用一键启动：填了它，设置页点一下就能把 NapCat 拉起来并读到登录二维码
+  qqNapcat: { wsUrl: 'ws://127.0.0.1:3001', accessToken: '', homeDir: '', port: 3001, reconnectMinMs: 1000, reconnectMaxMs: 30000 },
   qqOfficial: { appId: '', appSecret: '', sandbox: true },
   dsh: {
     nodePath: '',
@@ -342,6 +343,14 @@ export function normalizeConfig(raw, options = {}) {
     problems.push('qqNapcat.wsUrl 必须以 ws:// 或 wss:// 开头，当前为 ' + JSON.stringify(wsUrl));
   }
 
+  // 端口只是"去哪儿探测/连"，超出 1~65535 的值一定连不上，所以直接判成配置问题并回落默认
+  const rawPort = readInt(napcatRaw, 'qqNapcat.port', 'port', DEFAULT_CONFIG.qqNapcat.port, 1);
+  let napcatPort = rawPort;
+  if (rawPort > 65535) {
+    problems.push('qqNapcat.port 必须在 1~65535 之间，当前为 ' + rawPort);
+    napcatPort = DEFAULT_CONFIG.qqNapcat.port;
+  }
+
   const profile = readText(dshRaw, 'dsh.profile', 'profile', DEFAULT_CONFIG.dsh.profile, true);
   if (!profile) problems.push('dsh.profile 不能为空');
 
@@ -423,6 +432,8 @@ export function normalizeConfig(raw, options = {}) {
     },
     log: { dir: logDir, level: LOG_LEVELS.indexOf(logLevel) === -1 ? DEFAULT_CONFIG.log.level : logLevel },
     qqNapcat: {
+      homeDir: readPath(napcatRaw, 'qqNapcat.homeDir', 'homeDir', DEFAULT_CONFIG.qqNapcat.homeDir),
+      port: napcatPort,
       wsUrl,
       accessToken: readText(napcatRaw, 'qqNapcat.accessToken', 'accessToken', DEFAULT_CONFIG.qqNapcat.accessToken),
       reconnectMinMs: readInt(napcatRaw, 'qqNapcat.reconnectMinMs', 'reconnectMinMs', DEFAULT_CONFIG.qqNapcat.reconnectMinMs, 0),
