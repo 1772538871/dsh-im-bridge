@@ -177,7 +177,7 @@ test('apply 通过 ctx.slots.inject 注册 settings.section', () => {
   assert.equal(typeof options.order, 'number');
   assert.equal(options.order, 120);
   assert.equal(typeof options.label, 'function');
-  assert.equal(options.label(), 'dsh bot');
+  assert.equal(options.label(), '消息接入');
   assert.equal(component, exports.DshBotSection);
 });
 
@@ -206,7 +206,7 @@ test('加载态渲染不抛，且能看到状态行', () => {
   const text = textOf(element);
   assert.equal(element.type, 'div');
   assert.ok(text.includes('正在读取'), text);
-  assert.ok(text.includes('dsh bot'), text);
+  assert.ok(text.includes('消息接入'), text);
 });
 
 test('就绪态渲染出平台下拉、白名单文本域、数据目录、保存按钮', () => {

@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { SECRET_MASK, maskSecrets, mergeSecretMasks, resolveLogFile } from './config-store.mjs';
 import { listPlatforms } from './platforms.mjs';
+import { ensureDataLayout } from './data-layout.mjs';
 import { createNapcatLauncher } from './napcat-launcher.mjs';
 import { encodeQr, qrToSvg } from '../../lib/qr.js';
 import { createTokenProvider } from '../qqbot/auth.mjs';
@@ -274,6 +275,9 @@ export function createApiHandler({ configStore, runtime, logger = null, now = ()
     if (!saved.ok) {
       return sendJson(res, { ok: false, error: saved.error ?? '配置校验失败', problems: saved.problems ?? [] });
     }
+    // 保存成功就顺手把数据目录分层建好：用户不该为了 prompts/ 这种目录自己动手 mkdir。
+    // 这里不检查返回值——建目录失败只该 warn，不能让"保存成功"变成一个报错。
+    await ensureDataLayout({ rootDir: saved.config?.storage?.rootDir ?? '', logger });
     return sendJson(res, { ok: true, config: maskSecrets(saved.config), warnings: saved.warnings ?? [] });
   }
 

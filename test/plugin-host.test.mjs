@@ -287,8 +287,9 @@ test('GET /platforms: 字段表结构合法，secret 标记正确，key 都是�
 
 test('字段分组: basic 只放"新手必须看懂的那几项"，其余全进 advanced', () => {
   const BASIC = {
-    'qq-napcat': ['enabled', 'storage.rootDir', 'security.userWhitelist', 'testTarget', 'dsh.binPath', 'dsh.profile', 'qqNapcat.wsUrl', 'qqNapcat.accessToken'],
-    'qq-official': ['enabled', 'storage.rootDir', 'security.userWhitelist', 'testTarget', 'dsh.binPath', 'dsh.profile', 'qqOfficial.appId', 'qqOfficial.appSecret']
+    'qq-napcat': ['enabled', 'storage.rootDir', 'log.dir', 'security.userWhitelist', 'qqNapcat.wsUrl', 'qqNapcat.accessToken', 'qqNapcat.homeDir'],
+    'qq-official': ['enabled', 'storage.rootDir', 'log.dir', 'security.userWhitelist', 'qqOfficial.appId', 'qqOfficial.appSecret'],
+    wechat: ['enabled', 'storage.rootDir', 'log.dir', 'security.userWhitelist']
   };
   for (const platform of listPlatforms()) {
     const basic = platform.fields.filter((field) => field.group === 'basic').map((field) => field.key);
@@ -833,6 +834,48 @@ test('package.json / cordis.patch.yml 与契约 §1 逐字一致', async () => {
   assert.match(yml, /id:\s*dsh-bot\n/);
   assert.match(yml, /name:\s*'dsh-im-bridge'/);
   assert.match(yml, /config:\s*\{\}/);
+});
+
+// 数据目录分层：保存配置成功后自动建好（用户不用自己 mkdir prompts/ 这种目录）
+test('POST /config: 保存成功后自动建出 logs/media/history/prompts/state 与两份模板', async () => {
+  await withDir(async (dir) => {
+    const store = makeStore(dir);
+    const root = join(dir, 'data');
+    const handler = createApiHandler({ configStore: store, runtime: createRuntime({ configStore: store }) });
+
+    const { json } = await request(handler, postJson('/config', { config: withWhitelist(configFor(root)) }));
+    assert.equal(json.ok, true, JSON.stringify(json));
+
+    for (const name of ['logs', 'media', 'history', 'prompts', 'state']) {
+      const entries = await readdir(join(root, name));
+      assert.ok(Array.isArray(entries), '缺目录：' + name);
+    }
+    const prompts = await readdir(join(root, 'prompts'));
+    assert.deepEqual(prompts.sort(), ['persona.md', 'system.md']);
+    assert.match(await readFile(join(root, 'prompts', 'system.md'), 'utf8'), /系统级要求/);
+  });
+});
+
+// 运行时启动时再补一次：用户手删过目录、或手改了 storage.rootDir，都能自愈
+test('control start: 运行时启动时补建数据目录，用户手删过的目录能自愈', async () => {
+  await withDir(async (dir) => {
+    const store = makeStore(dir);
+    const root = join(dir, 'data');
+    await store.save(withWhitelist(configFor(root)));
+
+    const { modules } = fakeModules();
+    const runtime = createRuntime({ configStore: store, modules });
+    const started = await runtime.start();
+    assert.equal(started.ok, true, JSON.stringify(started));
+    assert.match(await readFile(join(root, 'prompts', 'persona.md'), 'utf8'), /改这个文件就等于换人格/);
+
+    await runtime.stop();
+    await rm(join(root, 'prompts'), { recursive: true, force: true });
+    const again = await runtime.start();
+    assert.equal(again.ok, true, JSON.stringify(again));
+    assert.deepEqual((await readdir(join(root, 'prompts'))).sort(), ['persona.md', 'system.md']);
+    await runtime.stop();
+  });
 });
 
 test('listPlatforms: wechat 明确标注未实现，qq-official 有 appId/appSecret', () => {

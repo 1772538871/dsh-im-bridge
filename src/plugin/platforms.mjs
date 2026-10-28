@@ -18,20 +18,26 @@ function field(key, label, type, extra = {}) {
 }
 
 // 与平台无关的字段：settings 页只按这里渲染，前端不写死任何字段表（契约 §5）
+// basic 只留"第一次接入必须填的那几项"（平台 / 凭证 / 数据目录 / 日志目录 / 启用），
+// 其余一律 advanced：它们收在设置页底部「显示全部字段（排查用）」后面，默认看不见。
 const COMMON_FIELDS = [
   field('enabled', '开机自动启动（DSH 一开，机器人也跟着醒来）', 'boolean', { group: 'basic' }),
-  field('storage.rootDir', '机器人存东西的文件夹（图片/文档/语音都放这，别选 C 盘）', 'text', {
+  field('storage.rootDir', '数据目录（附件/历史/日志/提示词都在这下面）', 'text', {
     group: 'basic',
     required: true,
     placeholder: 'E:\\dsh-im-bridge-data',
-    help: '要填绝对路径。放 C 盘只会给你一条黄色警告，但盘满了电脑会出毛病。'
+    help: '要填绝对路径，子文件夹会自己建好，不用你动手。放 C 盘只会给你一条黄色警告，但盘满了电脑会出毛病。'
+  }),
+  field('log.dir', '日志目录（留空=数据目录下的 logs）', 'text', {
+    group: 'basic',
+    placeholder: '留空即可',
+    help: '留空就用数据目录下的 logs；只有想把日志单独放一处时才填绝对路径。'
   }),
   field('security.userWhitelist', '谁能用：填你自己的 QQ 号，一行一个（空着不让启动）', 'stringList', {
     group: 'basic',
     help: '只有名单上的人发消息才理。空着不让启动是故意的：底层语义里空名单等于"谁都能使唤你电脑"。'
   }),
   field('testTarget', '测试消息发给谁（留空=自动用白名单里的号）', 'text', {
-    group: 'basic',
     placeholder: '1772538871',
     help: '点「发送测试消息」时发到这个号；留空就按平台从白名单里自动挑一个。'
   }),
@@ -96,12 +102,10 @@ const COMMON_FIELDS = [
     help: 'debug 全记（排查时用）、info 正常、warn 只记问题、error 只记错误。'
   }),
   field('dsh.binPath', 'DSH 主程序在哪（一般不用改，安装时会自动找）', 'text', {
-    group: 'basic',
     placeholder: 'E:\\Local\\npm\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js',
     help: '留空=让它自己找；日志里出现 spawn_error 时才需要手填这里。'
   }),
   field('dsh.profile', '用哪套 DSH 设置（默认 im-bridge，一般不用改）', 'text', {
-    group: 'basic',
     required: true,
     placeholder: 'im-bridge'
   }),
@@ -153,6 +157,7 @@ const PLATFORM_FIELDS = {
       placeholder: '留空表示不验证'
     }),
     field('qqNapcat.homeDir', 'NapCat 装在哪个目录（一键启动要用）', 'text', {
+      group: 'basic',
       placeholder: 'D:\\NapCat',
       help: '填了这里，向导里点「一键启动」就能把本机 NapCat 拉起来，登录二维码直接显示在上面，扫完码再填口令。'
     }),

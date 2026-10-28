@@ -57,6 +57,8 @@
 }
 ```
 - `storage.rootDir` 落在 `C:\` 时给 warning（用户规则：项目产物不进 C 盘）。
+- `log.dir` 留空 = `<storage.rootDir>/logs`（`resolveLogDir` 解析，**不写回配置文件**）。
+- 数据目录分层由 `src/plugin/data-layout.mjs` 的 `ensureDataLayout({rootDir, logger, fsImpl})` 负责：保存配置成功后（`POST /config`）与运行时启动时各调一次，幂等创建 `{logs,media,history,prompts,state}` 与两份模板 `prompts/system.md`、`prompts/persona.md`（`flag:'wx'`，已存在绝不覆盖），失败只 warn 不抛。模板正文会被 `src/prompt.mjs` 读入：有内容时按 `[系统要求]` → `[角色设定]` → `[用户消息]` 固定顺序拼在提示词里；注释（`<!-- -->`）与没填的空占位（`# 角色名`、`- 性格：`）不算内容，读不到也保持原样。
 
 ## 3. HTTP 接口（`ctx.webServer.register`，全部 `kind:'prefix'`, `path:'/dsh-bot/api'`）
 JSON 出入，全部 `Cache-Control: no-store`；写接口只接受 POST + `content-type: application/json`，body 上限 64KB；任何异常返回 `{ok:false, error}` 且 HTTP 仍 200（前端好处理），**不要把 stack 回给前端**。
@@ -79,7 +81,7 @@ JSON 出入，全部 `Cache-Control: no-store`；写接口只接受 POST + `cont
 
 `/napcat/*` 四条由 `src/plugin/napcat-launcher.mjs` 实现（依赖注入 fs/spawn/net/now/kill，于是真机上没装 NapCat 也能把每个分支验掉）：`start` 在 `qqNapcat.homeDir` 里按 `launcher-win10.bat` → `launcher.bat` → `napcat.bat` → `NapCatWinBootMain.exe` → `napcat.mjs` 取第一个存在的（`.bat` 走 `cmd /c`），`detached:true + stdio:'ignore' + shell:false` 拉起且不重复拉起；`qrcode` 只读 `<homeDir>/napcat/cache/qrcode.png` 或 `<homeDir>/cache/qrcode.png`（>100 字节才算数）；`loggedIn` 只是"端口通 + 二维码文件 60 秒没更新"的弱信号，取不到一律 `null`。未配置 `homeDir` 时四条都回同一句人话并保持 HTTP 200。
 
-`group` ∈ `basic|advanced`（缺省 `advanced`）：客户端只用它决定"首屏直接展开"还是"收进折叠区"。basic 组的口径是**新手必须看懂才能跑起来**的那几项（平台、谁能用、数据目录、收发测试消息的收件人、DSH 入口/profile、平台专属凭据），每个平台不超过 10 项；新增字段默认 advanced，想进首屏必须显式标注。
+`group` ∈ `basic|advanced`（缺省 `advanced`）：客户端只按它决定**默认可见**还是**收进「显示全部字段（排查用）」开关后面**（开关默认关闭，状态只活在组件内、不落配置）。basic 的口径固定为这 9 项（每个平台只出现自己相关的那些）：平台下拉、`qqOfficial.appId`、`qqOfficial.appSecret`、`qqNapcat.wsUrl`、`qqNapcat.accessToken`、`qqNapcat.homeDir`、`storage.rootDir`、`log.dir`、`enabled`。其余（并发/限流/分段/语音转写/审批/跑法/模型/预设/超时/`reply.*`/`social.*`/`approval.*`/`dsh.*`、以及**白名单**、`testTarget`）一律 advanced；新增字段默认 advanced，想进首屏必须显式标注并同步改 `test/plugin-host.test.mjs` 的 BASIC 表。
 
 `/test-send` 的收件人解析顺序：显式 `target` → 配置 `testTarget` → 平台启发式（`qq-official` 取 `security.userWhitelist` 里 ≥20 位十六进制的 openid，`qq-napcat` 取纯数字的 QQ 号）。发送走当前已启动适配器的 `deps.sendReply`（OneBot 的适配器 deps 为 null，按 `onebotSend` 模块补齐），固定文案 + 私聊。
 
@@ -110,17 +112,17 @@ window.__ModuleLoader__.load({
   }
 })
 ```
-- `apply(ctx)`：`ctx.slots.inject('settings.section', () => ctx.slots.register({ name:'settings.section', id:'dsh-bot', order: 120, label: () => 'dsh bot' }, DshBotSection))`，整段 try/catch（第三方插件都这么写，因为 slot 服务未文档化）。
+- `apply(ctx)`：`ctx.slots.inject('settings.section', () => ctx.slots.register({ name:'settings.section', id:'dsh-bot', order: 120, label: () => '消息接入' }, DshBotSection))`，整段 try/catch（第三方插件都这么写，因为 slot 服务未文档化）。
 - 组件签名 `({ close }) => React.createElement(...)`；**只用 React.createElement，不用 JSX**。
 - 表单数据全部来自 `GET /dsh-bot/api/platforms` + `GET /dsh-bot/api/config`，字段由 host 下发（前端不含任何平台硬编码字段表）。
-- 必需要有：平台下拉、按平台渲染字段（按 `group` 分成"常用设置"+「高级设置（一般不用改）」折叠区，用原生 `details/summary`）、白名单编辑（一行一个 QQ 号）、数据目录、启用开关、保存按钮、启动/停止按钮、「发送测试消息」按钮、状态行（running/enabled/lastError）、保存/测试结果提示。
-- 字段缺少 `group` 时整体按 basic 渲染（老版本 host 兼容）：宁可多显示，也不能让整页字段被折叠起来。
+- 必需要有：平台下拉、按平台渲染字段（`visibleFields(fields, showAllFields)` 默认只留 `group:'basic'`，底部一个默认关闭的「显示全部字段（排查用）」复选框放开 advanced）、数据目录、日志目录、启用开关、保存按钮、启动/停止按钮、「发送测试消息」按钮、状态行（running/enabled/lastError）、保存/测试结果提示。
+- 字段缺少 `group` 时整体按 basic 渲染（老版本 host 兼容）：宁可多显示，也不能让整页字段被开关藏掉。显示名（标题、副标题、slot label）是「消息接入」；`id`/`order`/`API_BASE`/`window.__ModuleLoader__` 的 id 一律仍是 `dsh-bot`，不许跟着文案改。
 - 用 `fetch` 直接打 `/dsh-bot/api/*`（同源，无需鉴权头）。
 - 任何网络失败都要渲染成一行人类可读的提示，不许白屏。
 
 ## 6. 测试
 - `test/plugin-host.test.mjs`：用假的 req/res 对象打路由，覆盖 GET/POST config（合法、校验失败不落盘、secret 掩码往返、`***` 表示不改）、`/platforms` 字段表结构 + `group` 分组口径（basic ≤ 10 且各平台固定）、`/test-send`（未启动 / 找不到收件人 / 成功 / 发不出去）、`/status`、`/logs/tail` 的越界拒绝、control 幂等、配置文件损坏恢复、C 盘 warning。
-- `test/plugin-client.test.mjs`：不加载 DSH 运行时，用 stub 的 `window.__ModuleLoader__` 捕获 factory，断言 `exports.inject`/`exports.apply` 存在、`apply` 用假 ctx 时确实调用 `ctx.slots.register({name:'settings.section', id:'dsh-bot'})`、`order` 是数字、label 函数返回 'dsh bot'；再断言组件对"字段表 + 配置"的纯渲染工具函数（把 fetch 抽成可注入）产出的元素不抛。
+- `test/plugin-client.test.mjs`：不加载 DSH 运行时，用 stub 的 `window.__ModuleLoader__` 捕获 factory，断言 `exports.inject`/`exports.apply` 存在、`apply` 用假 ctx 时确实调用 `ctx.slots.register({name:'settings.section', id:'dsh-bot'})`、`order` 是数字、label 函数返回 '消息接入'；再断言组件对"字段表 + 配置"的纯渲染工具函数（把 fetch 抽成可注入）产出的元素不抛。
 - `test/napcat-launcher.test.mjs`：一键启动器的全部分支（候选启动器挑选顺序、homeDir 缺失/不存在、spawn 参数 `detached`/`stdio ignore`/无 shell 拼接、重复 start 不重复拉起、端口已在监听不重复起、qrcode 两条路径回退与 >100 字节门槛、dataUrl 前缀、status 探测超时归零、stop 只杀自己的 pid）+ 四条路由的成功/未配置/方法不对/异常分支。
 - `test/napcat-client.test.mjs`：`describeNapcatPanel` 的三种方块形态与"绝不编已登录"、`readNapcatOnce`（注入时钟判过期）、`createNapcatWatcher`（注入假 fetch/定时器：进来先拉一次、3 秒一轮、stop 清定时器、卸载后迟到的响应丢弃），以及渲染出的 `<img src=dataUrl>`、占位与绿色方块。
 - 现有测试必须继续全绿（`node --test`）。

@@ -20,7 +20,7 @@ dsh plugin --profile web add .
 dsh web        # 必须重启：插件组合只在启动时完成
 ```
 
-重开 DSH 后：**设置 → dsh bot** → 选平台 → 填参数 → **保存** → **启动**。
+重开 DSH 后：**设置 → 消息接入** → 选平台 → 填参数 → **保存** → **启动**。
 
 ### 装不上的三种情况
 
@@ -28,7 +28,7 @@ dsh web        # 必须重启：插件组合只在启动时完成
 | --- | --- | --- |
 | `ERR_PNPM_UNEXPECTED_STORE` | 该 profile 的 `node_modules` 用的是另一个 pnpm store | 把现存 store 显式传进去：`dsh plugin --profile web add . --store-dir C:\Users\<你>\AppData\Local\pnpm\store\v10`（值看 `profiles/web/node_modules/.modules.yaml` 的 `storeDir`） |
 | 提示 `installed as a plain dependency, not a profile layer` | 包里没声明 `dsh.bundle.patch` | 正常 checkout 不会出现；若出现说明文件被改坏，重新 clone |
-| 装完设置里没有 dsh bot | 没重启 / bundles 没写进去 | 看 `profiles/web/package.json` 的 `dsh.profile.bundles` 有没有 `dsh-im-bridge`，没有就重装；有就重启 + 浏览器强刷 |
+| 装完设置里没有「消息接入」 | 没重启 / bundles 没写进去 | 看 `profiles/web/package.json` 的 `dsh.profile.bundles` 有没有 `dsh-im-bridge`，没有就重装；有就重启 + 浏览器强刷 |
 
 ### 卸载 / 回滚
 
@@ -82,7 +82,7 @@ node bin/bridge.mjs --config bridge.config.json           # 正式跑
 1. 打开 [QQ 开放平台](https://q.qq.com/) → 创建机器人 → 拿到 **AppID / AppSecret**；
 2. 在「开发设置」里把 `事件订阅` 保持 **WebSocket**；
 3. 在「开发体验用户」里**加上你自己的 QQ 号**——未认证主体只能靠这个白名单测试，别人发的消息机器人收不到；
-4. 填进 dsh bot 设置页 → 保存 → 启动。
+4. 填进「消息接入」设置页 → 保存 → 启动。
 
 > ⚠️ 未认证/未上线的机器人**只能在沙箱环境建会话**（正式网关会返回 `close 4903`）。插件在 `qqOfficial.sandbox = true` 时会自动走 `sandbox.api.sgroup.qq.com`，token 接口仍走正式域（沙箱域没有这个接口）。
 

@@ -20,7 +20,7 @@ node scripts/selfcheck.mjs
 
 | 症状 | 最可能的原因 | 怎么办 |
 | --- | --- | --- |
-| 设置侧栏没有「dsh bot」 | 没重启 / bundles 没写进去 / 浏览器缓存 | 重启 `dsh web` → Ctrl+F5；查 `profiles/web/package.json` 的 `dsh.profile.bundles` |
+| 设置侧栏没有「消息接入」 | 没重启 / bundles 没写进去 / 浏览器缓存 | 重启 `dsh web` → Ctrl+F5；查 `profiles/web/package.json` 的 `dsh.profile.bundles` |
 | 点启动被拒："白名单为空" | 安全默认 | 填你自己的号（官方平台填 **openid**） |
 | 状态「运行中」但发消息没反应 | 不在白名单 / 群里没 @ / 平台权限没开 | 日志里搜 `发送者不在白名单`、`need_at`；官方平台看下面错误码 |
 | 日志 `close 4903 create session error` | 未上线机器人在**正式**网关建会话 | 打开 `qqOfficial.sandbox`（走沙箱域） |

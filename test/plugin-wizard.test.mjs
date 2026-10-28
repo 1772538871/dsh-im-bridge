@@ -478,7 +478,13 @@ test('渲染: 向导卡片在设置页最上面，官方平台给出两个输入
   const element = exports.DshBotSection({ close: () => {} });
   const text = textOf(element);
   assert.ok(text.includes('连接向导（三步点通）'), text);
-  assert.ok(text.indexOf('连接向导') < text.indexOf('平台'), '向导必须排在平台下拉之前');
+  // 「平台」二字在副标题里也有（把各平台消息接给本机 DSH），所以按先序节点顺序比，
+  // 而不是拿字符串位置比——要比的是"向导卡片在平台下拉前面"这件事。
+  const nodes = findAll(element, () => true);
+  const wizardAt = nodes.findIndex((node) => textOf(node).includes('连接向导（三步点通）'));
+  const selectAt = nodes.findIndex((node) => node.type === 'select');
+  assert.ok(wizardAt >= 0 && selectAt >= 0, '向导卡片与平台下拉都得在');
+  assert.ok(wizardAt < selectAt, '向导必须排在平台下拉之前');
   assert.ok(text.includes('去开放平台'), text);
   const anchors = findAll(element, (n) => n.type === 'a');
   assert.equal(anchors.length, 1);

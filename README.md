@@ -26,9 +26,9 @@
 
 | | 插件模式（推荐，会用的人 90% 选这个） | 命令行模式（开发者 / 不要 GUI） |
 | --- | --- | --- |
-| 是什么 | 装进 DSH，设置侧栏多一个「dsh bot」，点点就能用 | 纯 Node 进程，配置文件 + 命令行启动 |
+| 是什么 | 装进 DSH，设置侧栏多一个「消息接入」，点点就能用 | 纯 Node 进程，配置文件 + 命令行启动 |
 | 适合 | 日常使用，想可视化配置 | 想在服务器/NAS 上跑，或接自己的进程管理 |
-| 入口 | DSH → 设置 → **dsh bot** | `node bin/bridge.mjs` |
+| 入口 | DSH → 设置 → **消息接入** | `node bin/bridge.mjs` |
 | 文档 | [docs/install.md · 插件](docs/install.md#方式一插件推荐) | [docs/install.md · 命令行](docs/install.md#方式二命令行) |
 
 ---
@@ -47,7 +47,7 @@ dsh plugin --profile web add .
 dsh web
 ```
 
-4. 打开 DSH → **设置 → dsh bot**
+4. 打开 DSH → **设置 → 消息接入**
 5. 选平台 → 填参数 → **保存** → **启动**
    - **QQ 官方机器人**：填 AppID / AppSecret（开放平台后台拿），机器人需在「开发体验用户」里加上你自己的 QQ
    - **NapCat / SnowLuma（个人 QQ 小号）**：填 WebSocket 地址（默认 `ws://127.0.0.1:3001`）和 accessToken，详见 [docs/NAPCAT.md](docs/NAPCAT.md)
@@ -72,18 +72,18 @@ git clone https://github.com/1772538871/dsh-im-bridge.git   # 1) 取代码
 cd dsh-im-bridge                                            # 2) 进目录
 dsh plugin --profile web add .                              # 3) 装进 DSH
 dsh web                                                     # 4) 重启 DSH（插件只在启动时装配）
-# 5) 浏览器开 http://127.0.0.1:3080 → 左下角 设置 → 侧栏 dsh bot
+# 5) 浏览器开 http://127.0.0.1:3080 → 左下角 设置 → 侧栏 消息接入
 ```
 
 在那一页里只剩 5 件事：选「QQ 官方机器人」→ 填 AppID / AppSecret → 「谁能用」里填他自己的 QQ 号 → **保存** → **启动**。
-想要一句"到底通了没"：点 **「发送测试消息」**，QQ 收到「【测试】dsh bot 已连通…」就是通了。其余设置都收在「高级设置（一般不用改）」里，不用管。
+想要一句"到底通了没"：点 **「发送测试消息」**，QQ 收到「【测试】消息接入已连通…」就是通了。其余设置都收在页面底部的「显示全部字段（排查用）」开关后面，不用管。
 
 卡住看哪份：
 
 | 卡在哪 | 看这里 |
 | --- | --- |
 | 不知道哪些格子必须填 | [docs/manual.zh.md](docs/manual.zh.md) 的「第一次开机：8 步」 |
-| 装不进 DSH / 设置页没有 dsh bot | [docs/install.md](docs/install.md) |
+| 装不进 DSH / 设置页没有「消息接入」 | [docs/install.md](docs/install.md) |
 | 状态行「运行中」但发消息没反应 | [docs/troubleshooting.md](docs/troubleshooting.md) |
 | 日志里一堆 4013 / 4914 之类的错误码 | [docs/manual.zh.md](docs/manual.zh.md) 的「它不听话时」 |
 | 不想用官方机器人，想接自己挂的 QQ（NapCat / SnowLuma 小号） | [docs/NAPCAT.md](docs/NAPCAT.md) |
@@ -92,7 +92,7 @@ dsh web                                                     # 4) 重启 DSH（�
 
 ## 界面预览
 
-装好之后，DSH 的设置侧栏会多出「dsh bot」这一页：
+装好之后，DSH 的设置侧栏会多出「消息接入」这一页：
 
 ![设置页](docs/images/settings.png)
 

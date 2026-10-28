@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import { createPlatformAdapter } from './platforms.mjs';
 import { resolveLogDir } from './config-store.mjs';
+import { ensureDataLayout } from './data-layout.mjs';
 
 // 内核模块一律按相对本文件的 URL 动态导入：插件被放到 <DSH_HOME>/profiles/*/plugins 下也能解析
 const CORE_MODULES = {
@@ -78,7 +79,7 @@ async function resolveModules(names, injected) {
   return { modules, missing };
 }
 
-export const TEST_MESSAGE_TEXT = '【测试】dsh bot 已连通，这是一条来自你电脑的消息。';
+export const TEST_MESSAGE_TEXT = '【测试】消息接入已连通，这是一条来自你电脑的消息。';
 
 // 官方机器人拿不到 QQ 号，只有 openid——一串 ≥20 位的小写十六进制
 const OPENID_LIKE = /^[0-9a-f]{20,}$/i;
@@ -235,6 +236,9 @@ export function createRuntime({ configStore, logger = null, modules = null, now 
     try {
       runtimeLogger = resolved.modules.log.createLogger({ dir: resolveLogDir(core), level: core.log?.level ?? 'info' });
       state.logger = runtimeLogger;
+      // 启动时再补一次（幂等）：用户可能手改了 storage.rootDir，或删掉了某个子目录。
+      // 失败只 warn，绝不能因为建不出文件夹就阻止机器人跑起来。
+      await ensureDataLayout({ rootDir: core.storage?.rootDir ?? '', logger: runtimeLogger });
 
       const storage = resolved.modules.storage.createStorage({ config: core, logger: runtimeLogger });
       const guard = resolved.modules.security.createGuard({ config: core, logger: runtimeLogger });

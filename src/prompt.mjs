@@ -1,4 +1,17 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 const KIND_LABEL = { image: "图片", file: "文件", record: "语音", text: "文本", other: "其他" };
+
+// 数据目录下的两份模板（由 data-layout.mjs 建好）：有内容就按固定顺序插在用户消息前面。
+const PROMPT_SECTIONS = [
+  { key: "system", file: "system.md", title: "[系统要求]" },
+  { key: "persona", file: "persona.md", title: "[角色设定]" },
+];
+const USER_SECTION_TITLE = "[用户消息]";
+// 模板骨架里的空占位：标题「# 角色名」和只有冒号没有内容的条目「- 性格：」。
+// 刚建出来的角色卡因此等于"没写"，不会把一张空白卡塞进每轮对话。
+const PLACEHOLDER_LINE = [/^#\s*角色名$/u, /^[-*·]\s*[^：:]{1,20}[：:]\s*$/u];
 
 function normalizeAttachment(item) {
   if (typeof item === "string") return { kind: "file", path: item, filename: null, note: null };
@@ -11,8 +24,54 @@ function normalizeAttachment(item) {
   };
 }
 
+// 注释是写给编辑模板的人看的，绝不进提示词；没写结尾的注释也要吃掉，不能被当成正文。
+function stripTemplateComments(text) {
+  return String(text).replace(/<!--[\s\S]*?(?:-->|$)/gu, "");
+}
+
+/** 模板正文：去掉注释、空行和没填的空占位，剩下的行才算"用户真的写了内容"。 */
+export function templateBody(text) {
+  if (typeof text !== "string" || text === "") return [];
+  const kept = [];
+  for (const raw of stripTemplateComments(text).split(/\r?\n/u)) {
+    const line = raw.replace(/\s+$/u, "");
+    const trimmed = line.trim();
+    if (trimmed === "") continue;
+    if (PLACEHOLDER_LINE.some((pattern) => pattern.test(trimmed))) continue;
+    kept.push(line);
+  }
+  return kept;
+}
+
+function dataDirOf(config) {
+  const root = config?.storage?.rootDir;
+  return typeof root === "string" ? root : "";
+}
+
+/**
+ * 读 <dataDir>/prompts/{system,persona}.md，只返回"有内容"的段（顺序固定）。
+ * 读不到（没建模板 / 没权限）就当没有这一节：提示词拼装绝不能因为读文件失败而中断。
+ */
+export function readPromptSections({ dataDir = "", fsImpl = null } = {}) {
+  const dir = typeof dataDir === "string" ? dataDir.trim() : "";
+  if (dir === "") return [];
+  const read = fsImpl && typeof fsImpl.readFileSync === "function" ? fsImpl.readFileSync : readFileSync;
+  const sections = [];
+  for (const section of PROMPT_SECTIONS) {
+    let text = "";
+    try {
+      text = read(join(dir, "prompts", section.file), "utf8");
+    } catch {
+      continue;
+    }
+    const body = templateBody(text);
+    if (body.length > 0) sections.push({ key: section.key, title: section.title, body });
+  }
+  return sections;
+}
+
 /** 把一条 QQ 消息 + 落地好的附件 + 语音转写拼成给 DSH 的单一任务文本。 */
-export function buildPrompt({ config, message, savedAttachments = [], voiceTranscript = null } = {}) {
+export function buildPrompt({ config, message, savedAttachments = [], voiceTranscript = null, dataDir = "", fsImpl = null } = {}) {
   const maxOriginal =
     Number.isFinite(config?.security?.maxPromptChars) && config.security.maxPromptChars > 0
       ? config.security.maxPromptChars
@@ -65,5 +124,12 @@ export function buildPrompt({ config, message, savedAttachments = [], voiceTrans
     lines.push(original);
   }
 
-  return lines.join("\n");
+  const body = lines.join("\n");
+  // 两份模板都没有内容时，提示词与之前逐字一致（老用户的对话习惯不变）
+  const sections = readPromptSections({ dataDir: dataDir || dataDirOf(config), fsImpl });
+  if (sections.length === 0) return body;
+
+  const blocks = sections.map((section) => section.title + "\n" + section.body.join("\n"));
+  blocks.push(USER_SECTION_TITLE + "\n" + body);
+  return blocks.join("\n\n");
 }
