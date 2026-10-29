@@ -117,7 +117,7 @@ test("延迟：抖动落在基准的 ±20% 之间（两端与中间值都验）"
 });
 
 test("延迟：回执和进度不受影响，只有最终回复才等", async () => {
-  const h = makePipeline({ replyText: "b".repeat(50), reply: { sendDelayMs: 10, ack: true }, random: 0.5 });
+  const h = makePipeline({ replyText: "b".repeat(50), reply: { sendDelayMs: 10, ack: true, ackMinSeconds: 0 }, random: 0.5 });
   await h.pipeline.handleEvent({ message: makeMessage() });
   assert.equal(h.replies.length, 2);
   assert.equal(h.sleeps.length, 1);

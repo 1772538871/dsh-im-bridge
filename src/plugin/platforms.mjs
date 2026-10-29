@@ -61,6 +61,8 @@ const COMMON_FIELDS = [
     help: '太小会截断长文档，太大会很慢、很贵。'
   }),
   field('reply.ack', '收到后先回一句「开始处理」（长任务不至于像死机）', 'boolean'),
+  field('reply.ackMinSeconds', '多久以上的任务才先回一句「收到」（秒，短问答不回执更像人）', 'number', { placeholder: '20' }),
+  field('reply.askWhenUnclear', '收到「ok/嗯/收到」这种没指向的消息时，先回一句「？」问清楚', 'boolean'),
   field('reply.progressEveryMs', '处理过程中每隔多久报一次进度（毫秒，0=不报）', 'number', { placeholder: '45000' }),
   field('reply.progressMax', '最多报几次进度', 'number', { placeholder: '2' }),
   field('reply.maxChunkChars', '一条回复最多多少字（超了拆成几条发）', 'number', {

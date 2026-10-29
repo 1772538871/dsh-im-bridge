@@ -83,7 +83,7 @@ function makePipeline({
       dsh: { cwd: 'E:/work', runner: 'inprocess', newSessionPerMessage: false },
       storage: { rootDir: dataDir, maxFileBytes: 1 << 20 },
       security: { userWhitelist: [], allowPrivate: true, allowGroup: true, groupRequireAt: false },
-      reply: { maxChunkChars: 1500, errorPrefix: '[b] ', ack: false, progressEveryMs: 0, progressMax: 0, ...reply },
+      reply: { maxChunkChars: 1500, errorPrefix: '[b] ', ack: false, ackMinSeconds: 0, progressEveryMs: 0, progressMax: 0, ...reply },
       journal,
     },
     logger: makeLogger(warnings),
@@ -222,7 +222,7 @@ test('回执：ack 关掉时一条都不发（长任务也不发）', async () =
 test('回执：短任务只说一句，不报附件也不报时间', async () => {
   const h = makePipeline({
     text: '你好',
-    reply: { ack: true },
+    reply: { ack: true, ackMinSeconds: 0 },
     runDsh: async () => ({ ok: true, text: '结果', sessionId: 'S1' }),
   });
   await h.pipeline.handleEvent({});
@@ -234,7 +234,7 @@ test('回执：短任务只说一句，不报附件也不报时间', async () =>
 test('回执：长任务才捎一句话说附件，而且不再拼项目符号', async () => {
   const h = makePipeline({
     text: '帮我整理全部资料',
-    reply: { ack: true },
+    reply: { ack: true, ackMinSeconds: 0 },
     segments: [{ type: 'image', data: { url: 'https://example.test/a.png' } }],
     mediaPlan: { url: 'https://example.test/a.png', filename: 'a.png' },
     runDsh: async () => ({ ok: true, text: '结果', sessionId: 'S1' }),
@@ -249,7 +249,7 @@ test('回执：长任务才捎一句话说附件，而且不再拼项目符号',
 
 test('回执：同一聊天连着两轮不会说同一句（随机源卡死也一样）', async () => {
   const h = makePipeline({
-    reply: { ack: true },
+    reply: { ack: true, ackMinSeconds: 0 },
     random: () => 0,
     runDsh: async () => ({ ok: true, text: '结果', sessionId: 'S1' }),
   });
@@ -262,7 +262,7 @@ test('回执：同一聊天连着两轮不会说同一句（随机源卡死也�
 
 test('回执：ackTone=plain 时换成中性句池', async () => {
   const h = makePipeline({
-    reply: { ack: true, ackTone: 'plain' },
+    reply: { ack: true, ackMinSeconds: 0, ackTone: 'plain' },
     runDsh: async () => ({ ok: true, text: '结果', sessionId: 'S1' }),
   });
   await h.pipeline.handleEvent({});
@@ -277,7 +277,7 @@ test('进度：补报的句子来自进度池、不带秒数，两次不一样',
   });
   const h = makePipeline({
     text: '帮我读三本书',
-    reply: { ack: true, progressEveryMs: 10000, progressMax: 2 },
+    reply: { ack: true, ackMinSeconds: 0, progressEveryMs: 10000, progressMax: 2 },
     random: () => 0,
     runDsh: () => pending,
   });

@@ -630,6 +630,13 @@ export function createPipeline({
    * 估个时长。字数/附件反映的是要读多少，真跑多久取决于模型和工具，
    * 所以这里只用来定量级，再被上一次真实耗时兜底。
    */
+  const UNCLEAR_REPLIES = ["？", "啥？", "嗯？你说哪件事", "在，说"];
+
+  /** 模糊回复就回一句短的问回去：比猜一件事去做更像人 */
+  function pickUnclearReply() {
+    return UNCLEAR_REPLIES[Math.floor(Math.random() * UNCLEAR_REPLIES.length)];
+  }
+
   function estimateSecondsOf(message, saved) {
     const text = typeof message?.text === "string" ? message.text : "";
     const chars = text.length;
@@ -935,17 +942,28 @@ export function createPipeline({
 
           // 长任务最怕"静默"：先回一条回执，超过阈值再报进度（用主动消息，不占被动回复配额）
           const heavyTask = /(整理|分析|总结|归纳|阅读|读一下|读完|遍历|批量|全部|每个|扫描|重构|改代码|修\s*bug|写成|生成|导出|翻译|对比)/.test(typeof message?.text === "string" ? message.text : "");
-          const ackOn = config?.reply?.ack === true;
+          // 「ok」「嗯」「好的」这种没有指向的回复：先问清楚，别自己猜一件事去做
+        const unclearText = typeof message?.text === "string" ? message.text.trim() : "";
+        const UNCLEAR_WORDS = /^(ok|okay|嗯+|好|好的|好滴|收到|行|可以|👌|👍|在吗|在么)$/iu;
+        if (config?.reply?.askWhenUnclear === true && saved.length === 0 && UNCLEAR_WORDS.test(unclearText)) {
+          await deliver(message, pickUnclearReply(resolved));
+          return;
+        }
+        const ackOn = config?.reply?.ack === true;
           const seconds = estimateSecondsOf(message, saved);
           const everyMs = Number(config?.reply?.progressEveryMs);
           const progressEvery = Number.isFinite(everyMs) && everyMs >= 10000 ? Math.floor(everyMs) : 45000;
           const maxRaw = Number(config?.reply?.progressMax);
           const progressMax = Number.isFinite(maxRaw) && maxRaw >= 0 ? Math.floor(maxRaw) : 2;
-          if (ackOn) await deliver(message, ackTextOf({ saved, seconds, resolved }));
+          // 回执只给"真的要等"的活儿：两三秒就答完的短问答再冒一句"行行行我来"很像机器
+        const ackMin = Number(config?.reply?.ackMinSeconds);
+        const ackMinSeconds = Number.isFinite(ackMin) && ackMin >= 0 ? Math.floor(ackMin) : 20;
+        const needAck = ackOn && seconds >= ackMinSeconds;
+        if (needAck) await deliver(message, ackTextOf({ saved, seconds, resolved }));
           const startedAt = Date.now();
           let progressTimer = null;
           let progressSent = 0;
-          if (ackOn && progressEvery > 0 && progressMax > 0) {
+          if (needAck && progressEvery > 0 && progressMax > 0) {
             progressTimer = setInterval(() => {
               if (progressSent >= progressMax) return;
               progressSent += 1;

@@ -38,6 +38,8 @@ export const DEFAULT_CONFIG = {
     errorPrefix: '[bridge] ',
     showSessionId: false,
     ack: true,
+    ackMinSeconds: 20,
+    askWhenUnclear: true,
     progressEveryMs: 45000,
     progressMax: 2,
     // 拟人层：发送前按字数停顿（0=不等），封顶 3 秒，只作用于最终回复
@@ -413,6 +415,8 @@ export function normalizeConfig(raw, options = {}) {
       errorPrefix: readText(replyRaw, 'reply.errorPrefix', 'errorPrefix', DEFAULT_CONFIG.reply.errorPrefix),
       showSessionId: readBool(replyRaw, 'reply.showSessionId', 'showSessionId', DEFAULT_CONFIG.reply.showSessionId),
       ack: readBool(replyRaw, 'reply.ack', 'ack', DEFAULT_CONFIG.reply.ack),
+      ackMinSeconds: readInt(replyRaw, 'reply.ackMinSeconds', 'ackMinSeconds', DEFAULT_CONFIG.reply.ackMinSeconds, 0),
+      askWhenUnclear: readBool(replyRaw, 'reply.askWhenUnclear', 'askWhenUnclear', DEFAULT_CONFIG.reply.askWhenUnclear),
       progressEveryMs: readInt(replyRaw, 'reply.progressEveryMs', 'progressEveryMs', DEFAULT_CONFIG.reply.progressEveryMs, 0),
       progressMax: readInt(replyRaw, 'reply.progressMax', 'progressMax', DEFAULT_CONFIG.reply.progressMax, 0),
       sendDelayMs: readInt(replyRaw, 'reply.sendDelayMs', 'sendDelayMs', DEFAULT_CONFIG.reply.sendDelayMs, 0),

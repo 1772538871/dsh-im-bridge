@@ -11,7 +11,7 @@ function makePipeline({ runDsh, config = {} }) {
     config: {
       storage: { rootDir: 'E:\\tmp' },
       security: { userWhitelist: [], groupWhitelist: [], allowPrivate: true, allowGroup: true, groupRequireAt: true, rateLimitPerMinute: 0 },
-      reply: { maxChunkChars: 1500, errorPrefix: '[b] ', ack: true, progressEveryMs: 10000, progressMax: 2, ...config },
+      reply: { maxChunkChars: 1500, errorPrefix: '[b] ', ack: true, ackMinSeconds: 0, progressEveryMs: 10000, progressMax: 2, ...config },
       qqbot: {},
     },
     logger: { info() {}, warn() {}, error() {}, debug() {}, child() { return this; } },
