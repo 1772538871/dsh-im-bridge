@@ -219,16 +219,16 @@ test('openWebUI: 读 webui.json 拿到端口与令牌，并用系统浏览器打
   const result = await launcher.openWebUI();
   assert.equal(result.ok, true);
   assert.equal(result.opened, true);
-  assert.equal(result.url, 'http://127.0.0.1:6099/');
+  assert.equal(result.url, 'http://127.0.0.1:6099/webui?token=49a78cfeb241');
   assert.equal(result.token, '49a78cfeb241');
-  assert.deepEqual(opened, ['http://127.0.0.1:6099/']);
+  assert.deepEqual(opened, ['http://127.0.0.1:6099/webui?token=49a78cfeb241']);
 });
 
 test('openWebUI: 读不到 webui.json 就回落 6099 + 空令牌，仍然把面板打开', async () => {
   const { launcher, opened } = makeLauncher({ fsImpl: fakeFs({ names: {}, files: {} }) });
   const result = await launcher.openWebUI();
   assert.equal(result.ok, true);
-  assert.equal(result.url, 'http://127.0.0.1:' + WEBUI_DEFAULT_PORT + '/');
+  assert.equal(result.url, 'http://127.0.0.1:' + WEBUI_DEFAULT_PORT + '/webui');
   assert.equal(result.token, '');
   assert.equal(opened.length, 1);
 });
@@ -266,7 +266,7 @@ test('openWebUI: 浏览器打不开时降级成人话 + 手动地址，绝不抛
   assert.equal(result.opened, false);
   assert.match(result.error, /没法自动打开浏览器/);
   assert.match(result.error, /EPERM/);
-  assert.ok(result.error.includes('http://127.0.0.1:6099/'), '要给出能手动点的地址：' + result.error);
+  assert.ok(result.error.includes('http://127.0.0.1:6099/webui?token=t'), '要给出能手动点的地址：' + result.error);
   assert.equal(result.token, 't', '打开失败也该把令牌带回去，人还能手抄');
 });
 
@@ -334,11 +334,11 @@ test('POST /napcat/open-webui: 透传宿主结果，只认 POST', async () => {
     stop: () => Promise.resolve({ ok: false }),
     openWebUI: () => {
       seen.push('openWebUI');
-      return Promise.resolve({ ok: true, url: 'http://127.0.0.1:6099/', token: 'abc', opened: true });
+      return Promise.resolve({ ok: true, url: 'http://127.0.0.1:6099/webui?token=49a78cfeb241', token: 'abc', opened: true });
     }
   };
   const ok = await callRoute(stub, { method: 'POST' });
-  assert.deepEqual(ok, { ok: true, url: 'http://127.0.0.1:6099/', token: 'abc', opened: true });
+  assert.deepEqual(ok, { ok: true, url: 'http://127.0.0.1:6099/webui?token=49a78cfeb241', token: 'abc', opened: true });
   assert.deepEqual(seen, ['openWebUI']);
 
   const rejected = await callRoute(stub, { method: 'GET' });

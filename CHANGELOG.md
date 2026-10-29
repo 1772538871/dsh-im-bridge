@@ -2,6 +2,16 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，语义化版本。
 
+## [0.9.13] - 2026-10-29
+
+### 修复
+- **「打开 NapCat 面板」打不开（ERR_EMPTY_RESPONSE）**：NapCat 的 WebUI 只在 **`/webui`** 下服务，根路径不响应；
+  它自己的启动日志就打印了 `http://127.0.0.1:6099/webui?token=<token>`。现在按钮打开的就是这个带 token 的地址，登录页不用再手抄令牌。
+- `/napcat/status` 增加 `webui: { port, token, url }`，卡片上的「令牌」不再显示 —。
+
+### 说明
+- 本插件只管理**自己拉起**的 NapCat 进程。若 NapCat 是外部启动的，请用设置页的「一键启动」（由 DSH 主进程拉起，才能常驻并被「停止」管）。
+
 ## [0.9.12] - 2026-10-29
 
 ### 变更（接入页收成"扫码一条路"）

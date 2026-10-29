@@ -446,6 +446,11 @@ export function createNapcatLauncher(deps = {}) {
       // 只要任一端口在听，就说明它确实在跑（否则界面会误报「未启动」）
       const candidates = [port, ...EXTRA_PORTS.filter((item) => item !== port)];
       const probed = await Promise.all(candidates.map((item) => probePort(netApi, '127.0.0.1', item, connectTimeoutMs)));
+      let webui = null;
+      try {
+        const w = await readWebui(home);
+        webui = { port: w.port, token: w.token, url: 'http://127.0.0.1:' + w.port + '/webui' + (w.token === '' ? '' : '?token=' + encodeURIComponent(w.token)) };
+      } catch { webui = null; }
       const ports = {};
       candidates.forEach((item, index) => { ports[item] = probed[index] === true; });
       const listening = probed.some((hit) => hit === true);
@@ -484,7 +489,8 @@ export function createNapcatLauncher(deps = {}) {
     } catch {
       // 读不到面板配置就只能按默认端口开，别把整件事搞失败
     }
-    const url = 'http://127.0.0.1:' + webui.port + '/';
+    // NapCat 只在 /webui 下服务，且接受 token 查询参数（它自己日志里就是这么打印的）
+    const url = 'http://127.0.0.1:' + webui.port + '/webui' + (webui.token === '' ? '' : '?token=' + encodeURIComponent(webui.token));
     const answer = { url, token: webui.token };
     try {
       if (home === '') return { ok: false, ...answer, opened: false, error: MSG_NO_HOME };
