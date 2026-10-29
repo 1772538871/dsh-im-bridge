@@ -488,16 +488,18 @@ test('渲染: 向导卡片在设置页最上面，官方平台给出两个输入
   // 而不是拿字符串位置比——要比的是"向导卡片在平台下拉前面"这件事。
   const nodes = findAll(element, () => true);
   const wizardAt = nodes.findIndex((node) => textOf(node).includes('连接向导（三步点通）'));
-  const selectAt = nodes.findIndex((node) => node.type === 'select');
-  assert.ok(wizardAt >= 0 && selectAt >= 0, '向导卡片与平台下拉都得在');
-  assert.ok(wizardAt < selectAt, '向导必须排在平台下拉之前');
+  const cardsAt = nodes.findIndex((node) => node.props && node.props.key === 'cards');
+  const connectAt = nodes.findIndex((node) => node.props && node.props.key === 'connectPanel');
+  assert.ok(wizardAt >= 0 && cardsAt >= 0 && connectAt >= 0, '平台卡片与接入卡片都得在');
+  assert.ok(cardsAt < connectAt, '平台卡片在上、接入卡片在下（页面没有 Tab 也没有字段表）');
+  assert.equal(findAll(element, (n) => n.type === 'select').length, 0, '字段表的平台下拉已经删了');
   assert.ok(text.includes('去开放平台'), text);
   const anchors = findAll(element, (n) => n.type === 'a');
   assert.equal(anchors.length, 1);
   assert.equal(anchors[0].props.href, 'https://q.qq.com/qqbot/#/developer');
   assert.ok(textOf(anchors[0]).includes('打开开放平台'));
   const password = findAll(element, (n) => n.type === 'input' && n.props.type === 'password');
-  assert.equal(password.length, 2, 'AppSecret 输入框 + 字段表里的密钥框');
+  assert.equal(password.length, 1, '只剩接入卡片里那一个 AppSecret 输入框');
   assert.ok(findAll(element, (n) => n.type === 'button' && textOf(n) === '验证凭证').length === 1);
   assert.ok(findAll(element, (n) => n.type === 'button' && textOf(n) === '复制链接').length === 1);
   assert.ok(findAll(element, (n) => n.type === 'button' && textOf(n) === '发条测试消息').length === 1);

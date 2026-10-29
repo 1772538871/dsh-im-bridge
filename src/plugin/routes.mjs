@@ -1,4 +1,5 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { SECRET_MASK, maskSecrets, mergeSecretMasks, resolveLogFile } from './config-store.mjs';
 import { listPlatforms } from './platforms.mjs';
 import { ensureDataLayout } from './data-layout.mjs';
@@ -7,12 +8,20 @@ import { encodeQr, qrToSvg } from '../../lib/qr.js';
 import { createTokenProvider } from '../qqbot/auth.mjs';
 import { createQqBotClient } from '../qqbot/client.mjs';
 import { createWechatClient } from '../wechat/client.mjs';
+import { PERSONA_FILE, JOURNAL_FILE, promptsDirOf, splitJournalEntries } from '../journal.mjs';
+import { appendLesson, deleteLessonAt, readLessons } from '../lessons.mjs';
+import { listStickers, removeSticker } from '../stickers.mjs';
 
 export const API_PREFIX = '/dsh-bot/api';
 export const MAX_BODY_BYTES = 64 * 1024;
 export const MAX_TAIL_LINES = 500;
 const DEFAULT_TAIL_LINES = 100;
 const CONTROL_ACTIONS = ['start', 'stop', 'restart'];
+// 人设 / 你教过的 / 日记 / 表情库：设置页底部四块记忆的落地参数
+export const PERSONA_MAX_CHARS = 20000;
+export const JOURNAL_UI_COUNT = 5;
+// 数据目录在设置页已经没有入口了：配置里留空时按这个默认位置走
+export const DEFAULT_DATA_ROOT = 'E:\\dsh-im-bridge-data';
 // token 接口只在正式域提供（沙箱域实测 404），网关二次确认才跟着 sandbox 开关走沙箱域
 export const TOKEN_API_BASE = 'https://api.bot.qq.com';
 export const SANDBOX_API_BASE = 'https://sandbox.api.sgroup.qq.com';
@@ -139,6 +148,34 @@ const AUTH_ERROR_CODES = new Set([11241, 11243]);
 
 function textOf(value) {
   return value === undefined || value === null ? '' : String(value).trim();
+}
+
+function isPlainObject(value) {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * POST /config 的请求体是"补丁"，不是整份配置：只带要改的键，其余按磁盘现值保留。
+ * 整份覆盖会让"只改白名单"这一下把用户手改过的隐藏字段（reply.ack=false、qqNapcat.homeDir…）
+ * 一起冲回默认值；数组整段替换（白名单是一份名单，不是要合并的集合）。
+ */
+export function mergeConfigPatch(current, patch) {
+  const base = isPlainObject(current) ? current : {};
+  if (!isPlainObject(patch)) return base;
+  const out = { ...base };
+  for (const key of Object.keys(patch)) {
+    const next = patch[key];
+    if (Array.isArray(next)) {
+      out[key] = next.slice();
+      continue;
+    }
+    if (isPlainObject(next) && isPlainObject(base[key])) {
+      out[key] = mergeConfigPatch(base[key], next);
+      continue;
+    }
+    out[key] = next;
+  }
+  return out;
 }
 
 function fail(step, error) {
@@ -304,7 +341,8 @@ export function createApiHandler({ configStore, runtime, logger = null, now = ()
     }
     const current = configStore.read();
     const merged = mergeSecretMasks(incoming, current.config);
-    const saved = await configStore.save(merged);
+    // 请求体是补丁：只改它带的键。整份覆盖会把页面没暴露的隐藏字段冲回默认值。
+    const saved = await configStore.save(mergeConfigPatch(current.config, merged));
     if (!saved.ok) {
       return sendJson(res, { ok: false, error: saved.error ?? '配置校验失败', problems: saved.problems ?? [] });
     }
@@ -463,6 +501,145 @@ export function createApiHandler({ configStore, runtime, logger = null, now = ()
     return sendJson(res, { ok: true, lines: lines.slice(-tailCount(url)) });
   }
 
+
+  // ---------------- 人设与记忆（设置页底部那一块） ----------------
+  // 四份文件都在 storage.rootDir 下：prompts/persona.md、prompts/lessons.md、
+  // prompts/journal.md、stickers/index.json。读不到（还没有这份文件）不算错误：
+  // 空列表就是实话，页面照常渲染，用户从"一条都没有"开始加。
+
+  function dataRootOf() {
+    const view = configStore.read();
+    const root = textOf(view && view.config && view.config.storage ? view.config.storage.rootDir : '');
+    // 数据目录不再出现在设置页：留空就按默认位置走，别让四块记忆因为一个空串存不下
+    return root === '' ? DEFAULT_DATA_ROOT : root;
+  }
+
+  async function readTextIfExists(file) {
+    try {
+      return { ok: true, text: await readFile(file, 'utf8') };
+    } catch (error) {
+      if (error && error.code === 'ENOENT') return { ok: true, text: '', empty: true };
+      return { ok: false, error: errorText(error) };
+    }
+  }
+
+  async function getPersona(res) {
+    const file = join(promptsDirOf(dataRootOf()), PERSONA_FILE);
+    const read = await readTextIfExists(file);
+    if (!read.ok) return sendJson(res, { ok: false, error: '读人设失败：' + read.error });
+    return sendJson(res, { ok: true, text: read.text, file, maxChars: PERSONA_MAX_CHARS, empty: read.empty === true });
+  }
+
+  async function putPersona(req, res) {
+    const type = String(req?.headers?.['content-type'] ?? '').toLowerCase();
+    if (!type.includes('application/json')) {
+      return sendJson(res, { ok: false, error: 'content-type 必须是 application/json' });
+    }
+    const body = await readJson(req);
+    if (!body.ok) return sendJson(res, { ok: false, error: body.error });
+    const value = isPlainObject(body.value) ? body.value : {};
+    if (typeof value.text !== 'string') {
+      return sendJson(res, { ok: false, error: '请求体必须是 {text:"人设正文"}' });
+    }
+    if (value.text.length > PERSONA_MAX_CHARS) {
+      return sendJson(res, {
+        ok: false,
+        error: '人设太长了：最多 ' + PERSONA_MAX_CHARS + ' 字，现在 ' + value.text.length + ' 字。把重复的删掉一些再保存。'
+      });
+    }
+    const dir = promptsDirOf(dataRootOf());
+    const file = join(dir, PERSONA_FILE);
+    try {
+      await mkdir(dir, { recursive: true });
+      await writeFile(file, value.text, 'utf8');
+    } catch (error) {
+      return sendJson(res, { ok: false, error: '写人设失败：' + errorText(error) });
+    }
+    return sendJson(res, { ok: true, text: value.text, chars: value.text.length, file, maxChars: PERSONA_MAX_CHARS });
+  }
+
+  async function getLessons(res) {
+    const view = readLessons({ dataDir: dataRootOf() });
+    if (!view.ok) return sendJson(res, { ok: false, error: view.error, lessons: [] });
+    return sendJson(res, { ok: true, lessons: view.lessons, empty: view.empty === true });
+  }
+
+  async function postLessons(req, res) {
+    const type = String(req?.headers?.['content-type'] ?? '').toLowerCase();
+    if (!type.includes('application/json')) {
+      return sendJson(res, { ok: false, error: 'content-type 必须是 application/json' });
+    }
+    const body = await readJson(req);
+    if (!body.ok) return sendJson(res, { ok: false, error: body.error });
+    const value = isPlainObject(body.value) ? body.value : {};
+    const raw = typeof value.body === 'string' ? value.body : typeof value.text === 'string' ? value.text : '';
+    if (raw.trim() === '') return sendJson(res, { ok: false, error: '要记什么？写一句话再点「加一条」' });
+    const added = await appendLesson({ dataDir: dataRootOf(), text: raw });
+    if (!added.ok) return sendJson(res, { ok: false, error: added.error });
+    const view = readLessons({ dataDir: dataRootOf() });
+    return sendJson(res, { ok: true, body: added.body, lessons: view.ok ? view.lessons : [] });
+  }
+
+  async function deleteLessons(req, res) {
+    const type = String(req?.headers?.['content-type'] ?? '').toLowerCase();
+    if (!type.includes('application/json')) {
+      return sendJson(res, { ok: false, error: 'content-type 必须是 application/json' });
+    }
+    const body = await readJson(req);
+    if (!body.ok) return sendJson(res, { ok: false, error: body.error });
+    const value = isPlainObject(body.value) ? body.value : {};
+    const index = Number(value.index);
+    if (!Number.isInteger(index) || index < 0) {
+      return sendJson(res, { ok: false, error: '要删哪一条？给一个从 0 开始的序号' });
+    }
+    const removed = await deleteLessonAt({ dataDir: dataRootOf(), index });
+    if (!removed.ok) return sendJson(res, { ok: false, error: removed.error, lessons: [] });
+    return sendJson(res, { ok: true, removed: removed.removed, lessons: removed.lessons });
+  }
+
+  async function getJournal(res) {
+    const file = join(promptsDirOf(dataRootOf()), JOURNAL_FILE);
+    const read = await readTextIfExists(file);
+    if (!read.ok) return sendJson(res, { ok: false, error: '读日记失败：' + read.error });
+    // 页面只看最近几条：切条用 journal.mjs 自己的切法，和提示词注入看到的是同一份
+    const entries = splitJournalEntries(read.text)
+      .slice(-JOURNAL_UI_COUNT)
+      .reverse()
+      .map((entry) => ({ title: entry.title, body: entry.body, text: entry.text }));
+    return sendJson(res, { ok: true, entries, empty: read.empty === true });
+  }
+
+  function stickersView() {
+    return listStickers({ rootDir: dataRootOf() }).map((entry) => ({
+      id: entry.id,
+      note: entry.note,
+      file: entry.file,
+      addedAt: entry.addedAt,
+      animated: entry.animated === true
+    }));
+  }
+
+  async function getStickers(res) {
+    const stickers = stickersView();
+    return sendJson(res, { ok: true, stickers, count: stickers.length });
+  }
+
+  async function deleteStickers(req, res) {
+    const type = String(req?.headers?.['content-type'] ?? '').toLowerCase();
+    if (!type.includes('application/json')) {
+      return sendJson(res, { ok: false, error: 'content-type 必须是 application/json' });
+    }
+    const body = await readJson(req);
+    if (!body.ok) return sendJson(res, { ok: false, error: body.error });
+    const value = isPlainObject(body.value) ? body.value : {};
+    const id = textOf(value.id);
+    if (id === '') return sendJson(res, { ok: false, error: '要删哪一张？' });
+    const removed = await removeSticker({ rootDir: dataRootOf(), id });
+    if (!removed.ok) return sendJson(res, { ok: false, error: removed.error });
+    const stickers = stickersView();
+    return sendJson(res, { ok: true, removed: { id: removed.entry.id }, stickers, count: stickers.length });
+  }
+
   async function dispatch(req, res) {
     const rawUrl = typeof req?.url === 'string' && req.url !== '' ? req.url : API_PREFIX;
     let url;
@@ -530,6 +707,27 @@ export function createApiHandler({ configStore, runtime, logger = null, now = ()
     if (suffix === '/napcat/open-webui') {
       if (method !== 'POST') return sendJson(res, { ok: false, error: '只接受 POST /napcat/open-webui' });
       return napcatCall('openWebUI', res);
+    }
+    // 人设与记忆：四块各自 GET / 写，全部 HTTP 200 + {ok}
+    if (suffix === '/persona') {
+      if (method === 'GET') return getPersona(res);
+      if (method === 'PUT') return putPersona(req, res);
+      return sendJson(res, { ok: false, error: '只接受 GET / PUT /persona' });
+    }
+    if (suffix === '/lessons') {
+      if (method === 'GET') return getLessons(res);
+      if (method === 'POST') return postLessons(req, res);
+      if (method === 'DELETE') return deleteLessons(req, res);
+      return sendJson(res, { ok: false, error: '只接受 GET / POST / DELETE /lessons' });
+    }
+    if (suffix === '/journal') {
+      if (method !== 'GET') return sendJson(res, { ok: false, error: '只接受 GET /journal（日记只读）' });
+      return getJournal(res);
+    }
+    if (suffix === '/stickers') {
+      if (method === 'GET') return getStickers(res);
+      if (method === 'DELETE') return deleteStickers(req, res);
+      return sendJson(res, { ok: false, error: '只接受 GET / DELETE /stickers' });
     }
     return sendJson(res, { ok: false, error: '未知接口：' + url.pathname });
   }

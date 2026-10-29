@@ -323,52 +323,48 @@ test('轮询: 进场第一次拉取就回填端口/令牌，并且其它状态�
   assert.ok(textOf(element).includes('已从 NapCat 自动读取端口与令牌'));
 });
 
-// ---------------- 3. 更多设置 ----------------
+// ---------------- 3. 「更多设置」整块删掉，只剩账号与权限 + 人设与记忆 ----------------
 
-test('更多设置: 默认收起，页面上看不到任何字段输入框', () => {
+test('更多设置: 整块没了，页面上一个字段输入框都没有', () => {
   const exports = loadClient(baseState());
   const element = exports.DshBotSection({ close: () => {} });
   const text = visibleText(element);
-  assert.ok(text.includes('更多设置'), text);
-  assert.ok(buttonByText(element, '修改配置', true), '收起态要给一个能改配置的入口');
+  assert.equal(text.includes('更多设置'), false, '「更多设置」这个名字也不该出现：' + text);
+  assert.equal(buttonByText(element, '修改配置', true), null);
   const inputs = findVisible(element, (node) => typeof node.props.id === 'string' && node.props.id.indexOf('dsh-bot-field-') === 0);
-  assert.equal(inputs.length, 0, '收起时字段表不可见');
+  assert.equal(inputs.length, 0, '字段表已经删了');
   assert.equal(findVisible(element, (node) => node.props.id === 'dsh-bot-platform').length, 0);
+  // 取代它的是这两块
+  assert.ok(text.includes('账号与权限'), text);
+  assert.ok(text.includes('人设与记忆'), text);
 });
 
-test('更多设置: 展开后先只给常用三项，勾「显示全部字段」才出现完整表', () => {
+test('人设与记忆: 展开后四块都给到位（人设框 / 加一条 / 日记 / 表情库）', () => {
   const mounted = mount(baseState(), {});
   let element = mounted.render();
-  buttonByText(element, '修改配置', true).props.onClick();
+  findVisible(element, (node) => node.type === 'button' && node.props.key === 'memoryToggle')[0].props.onClick();
   element = mounted.render();
-  assert.equal(mounted.state.showManualFields, true);
+  assert.equal(mounted.state.memoryOpen, true);
   const text = visibleText(element);
-  assert.ok(text.includes('数据目录'), text);
-  assert.ok(text.includes('用户白名单'), text);
-  assert.equal(text.includes('干活方式'), false, 'advanced 字段还得再勾一次才出现');
-  assert.ok(buttonByText(element, '保存', true), '展开后才有保存');
-
-  const toggle = findAll(element, (node) => node.type === 'label' && textOf(node).includes('显示全部字段（排查用）'))[0];
-  findAll(toggle, (node) => node.type === 'input')[0].props.onChange({ target: { checked: true } });
-  element = mounted.render();
-  assert.equal(mounted.state.showAllFields, true);
-  assert.ok(visibleText(element).includes('干活方式'), '勾上之后完整字段表出现');
-  assert.ok(buttonByText(element, '收起', true), '展开态必须能收回去');
+  for (const label of ['人设', '你教过的', '日记', '表情库']) assert.ok(text.includes(label), '缺一块：' + label);
+  assert.ok(findVisible(element, (node) => node.props.id === 'dsh-bot-persona').length === 1);
+  assert.ok(findVisible(element, (node) => node.props.id === 'dsh-bot-lesson').length === 1);
+  assert.ok(buttonByText(element, '保存人设', true));
+  assert.ok(buttonByText(element, '加一条', true));
 });
 
-test('保存: payload 带上自动回填的地址与令牌，platform 仍是个人号', async () => {
+test('保存: 「账号与权限」只提交白名单，别的字段一个字都不往上传', async () => {
   const saves = [];
   const api = {
     napcatStatus: () => Promise.resolve({ ok: true, listening: true, loggedIn: true, account: UIN, onebot: ONE_BOT }),
     napcatQr: () => Promise.resolve({ ok: false, error: '还没生成二维码' }),
     save: (payload) => {
       saves.push(payload);
-      return Promise.resolve({ ok: true, config: payload, configPath: 'E:\\cfg\\config.json' });
+      return Promise.resolve({ ok: true, config: { ...baseState().config }, configPath: 'E:\\cfg\\config.json' });
     }
   };
   const mounted = mount(
     baseState({
-      showManualFields: true,
       napcat: { status: { ok: true, listening: true, loggedIn: true, account: UIN, onebot: ONE_BOT }, qr: null, fetchedAt: 0, stale: false }
     }),
     api
@@ -378,10 +374,13 @@ test('保存: payload 带上自动回填的地址与令牌，platform 仍是个�
   await tick();
   assert.equal(saves.length, 1);
   const payload = saves[0];
-  assert.equal(payload.platform, 'qq-napcat');
-  assert.equal(payload.qqNapcat.wsUrl, 'ws://127.0.0.1:3001');
-  assert.equal(payload.qqNapcat.accessToken, '', '配置里那个空令牌不会被前端凭空改写');
+  // 只回传白名单：回传整份配置会把用户在配置文件里手改过的隐藏字段冲回默认值
+  assert.deepEqual(Object.keys(payload), ['security']);
+  assert.deepEqual(Object.keys(payload.security), ['userWhitelist']);
   assert.deepEqual(Array.from(payload.security.userWhitelist), ['1772538871']);
+  assert.ok(!('qqNapcat' in payload), 'NapCat 地址/令牌继续由自动探测管，不从界面回传');
+  assert.ok(!('storage' in payload), '数据目录也不再由界面回传');
+  assert.ok(visibleText(mounted.render()).includes('已保存：1 个人能用'), visibleText(mounted.render()));
 });
 
 // ---------------- 4. 打开 NapCat 面板 + 令牌 ----------------

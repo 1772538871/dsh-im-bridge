@@ -267,7 +267,8 @@ test('firstRunSteps：三步，id 与标题固定，每步都有一句人话 hin
   const steps = firstRunSteps();
   assert.equal(steps.length, 3);
   assert.deepEqual(Array.from(steps, (step) => step.id), ['platform', 'credentials', 'scope']);
-  assert.deepEqual(Array.from(steps, (step) => step.title), ['选平台', '填凭证', '谁能用 + 存哪']);
+  // 第 3 步不再问"存哪"：数据目录已经不是界面上的东西了
+  assert.deepEqual(Array.from(steps, (step) => step.title), ['选平台', '填凭证', '谁能用']);
   for (const step of steps) {
     assert.equal(typeof step.hint, 'string');
     assert.ok(step.hint.length > 0, step.id + ' 得有一句提示');
@@ -281,18 +282,22 @@ test('firstRunSteps：拿到的是副本，改了也污染不到下一次', () =
   assert.equal(firstRunSteps()[0].title, '选平台');
 });
 
-test('summaryLine：白名单 0/1/2 人时人数跟着数组长度走', () => {
-  const { summaryLine } = pureExports();
-  const config = (list) => ({ platform: 'qq-official', storage: { rootDir: 'E:\\dsh-im-bridge-data' }, security: { userWhitelist: list } });
-  assert.equal(summaryLine(config([]), 'qq-official'), '数据目录 E:\\dsh-im-bridge-data · 白名单 0 人 · 平台 QQ 官方机器人');
-  assert.equal(summaryLine(config(['1772538871']), 'qq-official'), '数据目录 E:\\dsh-im-bridge-data · 白名单 1 人 · 平台 QQ 官方机器人');
-  assert.equal(summaryLine(config(['1', '2']), 'qq-official'), '数据目录 E:\\dsh-im-bridge-data · 白名单 2 人 · 平台 QQ 官方机器人');
+test('摘要行搬到「人设与记忆」：summaryLine 已删，memorySummaryLine 说四块的真实数量', () => {
+  const { summaryLine, memorySummaryLine } = pureExports();
+  assert.equal(summaryLine, undefined, '旧摘要（数据目录/白名单/平台）跟着「更多设置」一起删了');
+  assert.equal(
+    memorySummaryLine({ personaText: '', lessons: [], journal: [], stickers: [] }),
+    '人设 空 · 你教过 0 条 · 日记 0 条 · 表情 0 张'
+  );
+  assert.equal(
+    memorySummaryLine({ personaText: '你叫小号', lessons: [{}, {}, {}], journal: [{}], stickers: [{}, {}] }),
+    '人设 4 字 · 你教过 3 条 · 日记 1 条 · 表情 2 张'
+  );
 });
 
-test('summaryLine：目录空着说"未设置"，个人号用中文平台名', () => {
-  const { summaryLine } = pureExports();
-  assert.equal(summaryLine({ storage: { rootDir: '  ' }, security: { userWhitelist: ['1'] } }, 'qq-napcat'), '数据目录 未设置 · 白名单 1 人 · 平台 QQ 个人账号');
-  assert.equal(summaryLine({}, 'mystery'), '数据目录 未设置 · 白名单 0 人 · 平台 mystery', '不认识的平台原样显示，不编名字');
+test('账号与权限：白名单文案与"只改这一项"的边界都写死了', () => {
+  const { WHITELIST_LABEL } = pureExports();
+  assert.equal(WHITELIST_LABEL, '谁能用：填你自己的 QQ 号 / 微信 wxid，一行一个（空着不让启动）');
 });
 
 test('stepProgressText：读的是 1 起，越界/脏状态一律夹回第一步', () => {
@@ -351,12 +356,12 @@ test('引导第 2 步：个人号给地址 / 口令 / 安装目录三个框', ()
   assert.ok(!text.includes('机器人 AppID'), '个人号不该问开放平台的凭证：' + text);
 });
 
-test('引导第 3 步：只问白名单和数据目录，按钮是「保存并启动」', () => {
+test('引导第 3 步：只问白名单（数据目录不再问），按钮是「保存并启动」', () => {
   const { element } = draw(stateOf(NOT_READY, { onboardingStep: 2 }));
   const text = visibleText(element);
   assert.ok(text.includes('第 3 步 / 共 3 步'), text);
   assert.ok(text.includes('用户白名单'), text);
-  assert.ok(text.includes('数据目录'), text);
+  assert.equal(text.includes('数据目录'), false, '数据目录不该再出现在任何界面：' + text);
   assert.ok(!text.includes('机器人 AppID'), '凭证不该在第 3 步再问一遍：' + text);
   const area = findVisible(element, (node) => node.type === 'textarea')[0];
   assert.equal(area.props.id, 'dsh-bot-step-security-userWhitelist', 'stringList 仍然用 textarea');
@@ -364,52 +369,58 @@ test('引导第 3 步：只问白名单和数据目录，按钮是「保存并�
   assert.ok(buttonByText(element, '上一步', true));
 });
 
-test('引导态：字段表整张不可见（没有可见的平台下拉，也没有可见的「保存」）', () => {
+test('引导态：字段表整张不存在（平台下拉与字段输入框一个都没有）', () => {
   const { element } = draw(stateOf(NOT_READY));
   assert.equal(findVisible(element, (node) => node.props.id === 'dsh-bot-platform').length, 0);
-  assert.equal(buttonByText(element, '保存', true), null, '引导没走完就不该露出字段表的保存按钮');
   assert.equal(fieldInputIds(element, true).length, 0, '第 1 步本来就没有输入框');
-  assert.ok(findVisible(element, (node) => node.props.id === 'dsh-bot-platform').length === 0);
+  assert.equal(buttonByText(element, '修改配置', true), null, 'B 态的摘要入口已经删了');
+  // 页面上唯一那个「保存」属于「账号与权限」，不是字段表的
+  const save = buttonByText(element, '保存', true);
+  assert.ok(save, '账号与权限那块必须能存白名单');
+  assert.equal(textOf(element).includes('更多设置'), false);
 });
 
-// ---------------- 4. B 态：摘要 + 修改配置 ----------------
+// ---------------- 4. B 态：账号与权限 + 人设与记忆（没有字段表了） ----------------
 
-test('已配置：首屏只有摘要 + 「修改配置」，看不到任何字段输入框', () => {
+test('已配置：页面上只剩顶部动作 / 卡片 / 账号与权限 / 人设与记忆', () => {
   const { element } = draw(stateOf(READY_OFFICIAL));
   const text = visibleText(element);
-  assert.ok(text.includes('数据目录 E:\\dsh-im-bridge-data · 白名单 1 人 · 平台 QQ 官方机器人'), text);
-  assert.ok(buttonByText(element, '修改配置', true), '必须给一个改配置的入口');
-  assert.equal(fieldInputIds(element, true).length, 0, '首屏不该有字段输入框');
-  assert.equal(findVisible(element, (node) => node.type === 'textarea').length, 0);
+  assert.equal(text.includes('数据目录'), false, '数据目录已经不是界面上的东西：' + text);
+  assert.equal(buttonByText(element, '修改配置', true), null, '「修改配置」入口删了');
+  assert.equal(buttonByText(element, '展开设置', true), null, '「展开设置」入口也删了');
+  assert.ok(text.includes('账号与权限'), text);
+  assert.ok(text.includes('人设与记忆'), text);
+  assert.equal(fieldInputIds(element, true).length, 0, '一个字段输入框都不该有');
   assert.equal(findVisible(element, (node) => node.props.id === 'dsh-bot-platform').length, 0);
-  assert.equal(buttonByText(element, '保存', true), null);
-  // 顶部操作行保持原样：开机自动启动 / 启动 / 停止 / 重启 / 发送测试消息
-  for (const label of ['启动', '停止', '重启', '发送测试消息']) assert.ok(buttonByText(element, label, true), '缺按钮：' + label);
+  // 顶部操作行只留四个：开机自启 + 启动/停止/重启（「发送测试消息」只在卡片里）
+  for (const label of ['启动', '停止', '重启']) assert.ok(buttonByText(element, label, true), '缺按钮：' + label);
+  assert.equal(buttonByText(element, '发送测试消息', true), null, '顶部不许再留这个按钮');
+  assert.ok(buttonByText(element, '发条测试消息', true), '卡片里那个才是唯一的测试入口');
   const checkboxes = findVisible(element, (node) => node.type === 'input' && node.props.type === 'checkbox');
   assert.equal(checkboxes.length, 1, '只剩「开机自动启动」一个勾选框');
 });
 
-test('已配置：点「修改配置」展开完整字段表，点「收起」回到摘要', () => {
+test('已配置：点「展开」才露出人设文本框，点「收起」收回去（状态不丢）', () => {
   const mounted = mount(stateOf(READY_OFFICIAL), NO_API);
   let element = mounted.render();
-  assert.equal(fieldInputIds(element, true).length, 0, '默认收起');
+  assert.equal(findVisible(element, (node) => node.props.id === 'dsh-bot-persona').length, 0, '默认收起');
 
-  buttonByText(element, '修改配置', true).props.onClick();
+  buttonByText(element, '展开', true).props.onClick();
   element = mounted.render();
-  assert.equal(mounted.state.showManualFields, true);
-  assert.equal(findVisible(element, (node) => node.props.id === 'dsh-bot-field-qqOfficial-appId').length, 1, '展开后字段出现');
-  assert.equal(findVisible(element, (node) => node.props.id === 'dsh-bot-platform').length, 1);
-  assert.ok(buttonByText(element, '保存', true), '展开后才有字段表的保存');
-  assert.ok(findVisible(element, (node) => node.props.id === 'dsh-bot-field-dsh-runner').length === 0, 'advanced 仍然收在开关后面');
-  const collapse = buttonByText(element, '收起', true);
-  assert.ok(collapse, '展开态必须能收回去');
-  assert.equal(buttonByText(element, '修改配置', true), null, '展开态不该同时留着入口');
+  assert.equal(mounted.state.memoryOpen, true);
+  assert.equal(findVisible(element, (node) => node.props.id === 'dsh-bot-persona').length, 1, '展开后人设框出现');
+  assert.equal(findVisible(element, (node) => node.props.id === 'dsh-bot-lesson').length, 1, '教过的输入框也在');
+  assert.ok(buttonByText(element, '保存人设', true));
+  assert.ok(buttonByText(element, '加一条', true));
 
+  // 接入卡片上也有一个「收起」：这里必须按 key 选，不能按文字选
+  const collapse = findVisible(element, (node) => node.type === 'button' && node.props.key === 'memoryToggle')[0];
+  assert.ok(collapse, '展开态必须能收回去');
   collapse.props.onClick();
   element = mounted.render();
-  assert.equal(mounted.state.showManualFields, false);
-  assert.ok(buttonByText(element, '修改配置', true), '收起来之后又只剩摘要和入口');
-  assert.equal(fieldInputIds(element, true).length, 0);
+  assert.equal(mounted.state.memoryOpen, false);
+  assert.equal(findVisible(element, (node) => node.props.id === 'dsh-bot-persona').length, 0, '收起后又看不见');
+  assert.ok(buttonByText(element, '展开', true), '收起来之后又只剩入口');
 });
 
 // ---------------- 5. 交互：保存失败不跳步 / 保存并启动成功 ----------------
@@ -472,27 +483,36 @@ test('交互：保存并启动 → 先 POST /config 再 POST /control，然后�
   assert.equal(mounted.state.onboardingStep, 0, '走完回到第一步，下次从没配置重新开始时不用手动退');
   const text = visibleText(element);
   assert.ok(text.includes('配置已保存，机器人已启动'), text);
-  assert.ok(text.includes('数据目录 E:\\dsh-im-bridge-data · 白名单 1 人 · 平台 QQ 官方机器人'), text);
-  assert.ok(buttonByText(element, '修改配置', true), '配好之后主界面只剩状态 + 摘要 + 操作按钮');
+  // 配好之后引导卡消失，页面上只剩四块：没有字段表，也读不到数据目录这种内部概念
+  assert.equal(text.includes('第 3 步 / 共 3 步'), false, '走完就该收起引导：' + text);
+  assert.equal(text.includes('数据目录'), false);
+  assert.equal(buttonByText(element, '修改配置', true), null);
+  assert.ok(text.includes('账号与权限'), text);
   assert.equal(fieldInputIds(element, true).length, 0);
 });
 
 // ---------------- 6. 这些状态只在组件内 ----------------
 
-test('createInitialState：引导步号与展开开关都不进配置', () => {
+test('createInitialState：引导步号与记忆展开开关都只在组件里，不进配置', () => {
   const { createInitialState, buildConfig, normalizePlatforms } = pureExports();
   const initial = createInitialState();
   assert.equal(initial.onboardingStep, 0);
-  assert.equal(initial.showManualFields, false);
   assert.equal(initial.onboardingError, null);
+  assert.equal(initial.memoryOpen, false, '人设与记忆默认收起');
+  assert.equal(initial.memoryLoaded, false);
+  assert.equal(initial.whitelistText, null, '没改过时显示配置里那份名单');
+  // 已经删掉的界面状态不许再回来
+  for (const key of ['showManualFields', 'showAllFields', 'showLogDir']) {
+    assert.equal(key in initial, false, '删掉的状态不该复活：' + key);
+  }
 
   const fields = normalizePlatforms(PLATFORMS)[0].fields;
   const next = buildConfig(READY_OFFICIAL, fields, {
     onboardingStep: 2,
-    showManualFields: true,
+    memoryOpen: true,
     'storage.rootDir': 'E:\\dsh-im-bridge-data'
   });
-  assert.equal('onboardingStep' in next, false);
-  assert.equal('showManualFields' in next, false);
+  assert.equal('onboardingStep' in next, false, '界面状态写进配置就是污染');
+  assert.equal('memoryOpen' in next, false);
   assert.equal('onboardingError' in next, false);
 });

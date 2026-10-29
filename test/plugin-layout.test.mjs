@@ -317,7 +317,8 @@ test('渲染: 上面平台卡片、下面接入卡片，顶部只留状态药丸
   const element = DshBotSection({ close: () => {} });
   const text = textOf(element);
   assert.ok(text.includes('1 / 1 在线'), text);
-  assert.ok(text.includes('更多设置'), '常用字段收进「更多设置」：' + text);
+  // 「更多设置」这块整块删了：路径/日志/排错字段都不再出现在页面上
+  assert.equal(text.includes('更多设置'), false, '「更多设置」必须彻底消失：' + text);
   assert.ok(text.includes('QQ 官方机器人'), '平台卡片用 /platforms 的名称：' + text);
   assert.equal(text.includes('即将支持'), false, '三个平台都能用了，不该再有「即将支持」：' + text);
   const pressed = findAll(element, (n) => n.props && Object.prototype.hasOwnProperty.call(n.props, 'aria-pressed'));
@@ -351,14 +352,16 @@ test('渲染: 已绑定卡片显示名称、状态与最近检查时间', () => 
   assert.match(text, /最近检查 \d\d:\d\d:\d\d/, text);
 });
 
-test('渲染: 「取消」只收起向导卡，字段表与配置一个都没丢', () => {
+test('渲染: 「收起」只收起向导卡，配置一个都没丢（也没有字段表可丢）', () => {
   const { DshBotSection } = loadClient(sectionState({ connectCollapsed: true }));
   const text = textOf(DshBotSection({ close: () => {} }));
   assert.ok(text.includes('接入向导已收起，配置没有改动。'), text);
   assert.ok(text.includes('展开'), text);
   assert.ok(!text.includes('复制链接'), '收起后不再显示链接与复制按钮：' + text);
-  assert.ok(text.includes('数据目录'), '字段表仍在（收起不改配置）：' + text);
-  assert.ok(text.includes('保存'), text);
+  // 收起只影响这张卡：账号与权限、人设与记忆都还在，配置也没动
+  assert.ok(text.includes('账号与权限'), '收起卡片不影响别的块：' + text);
+  assert.ok(text.includes('人设与记忆'), '收起卡片不影响别的块：' + text);
+  assert.equal(text.includes('数据目录'), false, '字段表已经删掉了，不存在"还在不在"：' + text);
 });
 
 test('渲染: 窄屏宽度下两栏容器改成纵向堆叠', () => {
@@ -381,7 +384,6 @@ test('导出保留: 既有纯函数与新增布局函数同时在', () => {
     'resolveWizardStep',
     'describeVerifyResult',
     'buildVerifyPayload',
-    'groupFields',
     'buildConfig',
     'describeTestResult',
     'platformCards',
@@ -393,4 +395,17 @@ test('导出保留: 既有纯函数与新增布局函数同时在', () => {
   ]) {
     assert.equal(typeof exports[name], 'function', '缺少导出：' + name);
   }
+  // 字段表删了，它那套纯函数也不该还挂着
+  assert.equal('groupFields' in exports, false, 'groupFields 跟着字段表一起删');
+});
+
+// ---------------- 7. 检测连接与收起文案 ----------------
+
+test('导出保留: 「检测连接」的三态与「收起」文案都能单独断言', () => {
+  const exports = loadClient();
+  assert.equal(typeof exports.describeNapcatCheck, 'function');
+  assert.equal(typeof exports.portFromWsUrl, 'function');
+  assert.equal(exports.COLLAPSE_LABEL, '收起');
+  assert.equal(exports.COLLAPSE_HINT, '只收起这张卡，不改配置');
+  assert.equal(exports.NAPCAT_DEFAULT_WS_PORT, 3001);
 });

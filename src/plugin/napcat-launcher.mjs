@@ -30,7 +30,7 @@ export const ONEBOT_FILE_PREFIX = 'onebot11_';
 export const WEBUI_FILE = 'webui.json';
 export const WEBUI_DEFAULT_PORT = 6099;
 
-export const MSG_NO_HOME = '还没填 NapCat 安装目录：在高级设置里填一次（例如 D:\\NapCat），之后就只用点启动';
+export const MSG_NO_HOME = '还没填 NapCat 安装目录：在配置文件的 qqNapcat.homeDir 里填一次（例如 D:\\NapCat），之后就只用点启动';
 export const MSG_NO_QRCODE = '还没生成二维码：先点一键启动，等它出码（一般 5–20 秒）';
 
 function toText(value) {

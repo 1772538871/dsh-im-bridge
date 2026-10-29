@@ -537,7 +537,11 @@ test('渲染: 已扫码登录且保存的平台还是官方机器人 -> 出现�
   assert.ok(button, textOf(element));
   assert.equal(button.props.style.background, 'var(--dsh-accent, #247bbf)', '必须是主按钮');
   const labels = findAll(element, (n) => n.type === 'button').map((n) => textOf(n));
-  assert.ok(labels.includes('检测连接') && labels.includes('取消'), '原有按钮一个都不少：' + labels.join('|'));
+  // 「取消」改成「收起」：它只收卡片，不动配置，文案必须和真实行为一致
+  assert.ok(labels.includes('检测连接') && labels.includes('收起'), '原有按钮一个都不少：' + labels.join('|'));
+  assert.equal(labels.includes('取消'), false, '「取消」会让人以为会撤销，已经改名：' + labels.join('|'));
+  // 旁边那行小字要说清"只收起这张卡，不改配置"
+  assert.ok(textOf(element).includes('只收起这张卡，不改配置'), textOf(element));
 });
 
 test('渲染: platform 已经是 qq-napcat 时不渲染「用这个小号」', () => {
@@ -580,4 +584,114 @@ test('渲染: 点「用这个小号」-> 先存配置（platform=qq-napcat）再
   assert.equal(calls[0].config.qqNapcat.wsUrl, 'ws://127.0.0.1:3001');
   assert.equal(calls[0].config.qqNapcat.accessToken, '***');
   assert.equal(calls[1].action, 'restart');
+});
+
+// ---------------- 6. 「检测连接」：三态文案 + 结果只进卡片 ----------------
+
+test('describeNapcatCheck: 端口通且知道小号 -> 已连上 ws://127.0.0.1:3001：小号 12345 在线', () => {
+  const { describeNapcatCheck } = loadClient();
+  const view = describeNapcatCheck({ ok: true, listening: true, loggedIn: true, port: 3001, account: '12345' }, 3001);
+  assert.equal(view.ok, true);
+  assert.equal(view.port, 3001);
+  assert.equal(view.text, '已连上 ws://127.0.0.1:3001：小号 12345 在线');
+});
+
+test('describeNapcatCheck: 端口通但不知道账号 -> 省略账号，只说小号在线', () => {
+  const { describeNapcatCheck } = loadClient();
+  assert.equal(
+    describeNapcatCheck({ ok: true, listening: true }, 3001).text,
+    '已连上 ws://127.0.0.1:3001：小号在线'
+  );
+  assert.equal(describeNapcatCheck({ ok: true, listening: true, account: '  ' }, 3001).text, '已连上 ws://127.0.0.1:3001：小号在线');
+});
+
+test('describeNapcatCheck: 宿主给了 error 就原样搬，不叠前缀也不改语气', () => {
+  const { describeNapcatCheck } = loadClient();
+  const serverText = '没找到 NapCat 安装目录：先填一次目录';
+  const view = describeNapcatCheck({ ok: false, error: serverText }, 3001);
+  assert.equal(view.ok, false);
+  assert.equal(view.text, serverText, '宿主已经说人话了，前端只负责原样展示');
+});
+
+test('describeNapcatCheck: 没在监听 / 端口不通 -> 连不上 + 两条最可能的原因', () => {
+  const { describeNapcatCheck } = loadClient();
+  const down = describeNapcatCheck({ ok: true, listening: false, loggedIn: false }, 3001);
+  assert.equal(down.ok, false);
+  assert.equal(down.text, '连不上 ws://127.0.0.1:3001：NapCat 没在跑，或 OneBot 的 WebSocket 服务器没开。');
+  // 没有回执（null / 脏值）也是同一句话：不编"已连上"
+  assert.equal(describeNapcatCheck(null, 3001).text, down.text);
+  assert.equal(describeNapcatCheck({}, 3001).text, down.text);
+});
+
+test('describeNapcatCheck: 端口取 payload.port -> 配置里的 wsUrl -> 3001', () => {
+  const { describeNapcatCheck, portFromWsUrl, NAPCAT_DEFAULT_WS_PORT } = loadClient();
+  assert.equal(NAPCAT_DEFAULT_WS_PORT, 3001);
+  assert.equal(portFromWsUrl('ws://127.0.0.1:3009'), 3009);
+  assert.equal(portFromWsUrl(''), 0);
+  // payload 自己报了端口就用它（NapCat 面板里可能改过）
+  assert.match(describeNapcatCheck({ ok: true, listening: true, port: 3011 }, 3009).text, /ws:\/\/127\.0\.0\.1:3011/u);
+  // payload 没报就从配置的 wsUrl 里取
+  assert.match(describeNapcatCheck({ ok: true, listening: true }, 3009).text, /ws:\/\/127\.0\.0\.1:3009/u);
+  // 都没给才落到 3001
+  assert.match(describeNapcatCheck({ ok: true, listening: true }, 0).text, /ws:\/\/127\.0\.0\.1:3001/u);
+});
+
+test('检测连接: 点一下问的是 /napcat/status（不是运行时 /status），结果写进卡片', async () => {
+  const calls = [];
+  // 故意不提供 api.status：真调运行时状态就会 TypeError，等于当场露馅
+  const api = {
+    napcatStatus() {
+      calls.push('napcat/status');
+      return Promise.resolve({ ok: true, listening: true, loggedIn: true, port: 3001, account: '12345' });
+    },
+    napcatQr() {
+      return Promise.resolve({ ok: false, error: '还没生成二维码' });
+    }
+  };
+  const exports = loadClient(stateWith({ status: null, qr: null }));
+  const element = exports.DshBotSection({ api, close: () => {} });
+  const detect = findAll(element, (n) => n.type === 'button' && textOf(n) === '检测连接')[0];
+  assert.ok(detect, textOf(element));
+  detect.props.onClick();
+  await flush();
+  assert.deepEqual(calls, ['napcat/status']);
+});
+
+test('检测连接: 结果贴在卡片里（不是页面级 notice），并写进 napcatCheck', () => {
+  const state = stateWith(
+    { status: { ok: true, listening: true, loggedIn: true }, qr: null },
+    { napcatCheck: { ok: true, listening: true, port: 3001, account: '12345' } }
+  );
+  const exports = loadClient(state);
+  const element = exports.DshBotSection({ api: fakeApi(), close: () => {} });
+  const check = findAll(element, (n) => n.props && n.props.key === 'napcatCheck')[0];
+  assert.ok(check, '检测结果必须是卡片里的一个节点：' + textOf(element));
+  assert.equal(textOf(check), '已连上 ws://127.0.0.1:3001：小号 12345 在线');
+  // 和按钮同一张卡：顺着 secondary 行往上看能遇到它
+  const card = findAll(element, (n) => n.props && n.props.key === 'connect')[0];
+  assert.ok(card && textOf(card).includes('已连上 ws://127.0.0.1:3001'), '结果必须落在接入卡片里');
+});
+
+test('检测连接: 进行中按钮写「检测中…」并且 disabled', () => {
+  const exports = loadClient(stateWith({ status: null, qr: null }, { busy: 'detect' }));
+  const element = exports.DshBotSection({ api: fakeApi(), close: () => {} });
+  const detecting = findAll(element, (n) => n.type === 'button' && textOf(n) === '检测中…')[0];
+  assert.ok(detecting, textOf(element));
+  assert.equal(detecting.props.disabled, true);
+  assert.equal(findAll(element, (n) => n.type === 'button' && textOf(n) === '检测连接').length, 0);
+});
+
+test('检测连接: 微信平台仍然只问微信桥，不碰 NapCat', () => {
+  const exports = loadClient();
+  const state = exports.switchPlatformForm(
+    { ...stateWith({ status: null, qr: null }), platformId: 'qq-napcat' },
+    'wechat'
+  );
+  const element = loadClient({ ...stateWith({ status: null, qr: null }), ...state }).DshBotSection({
+    api: fakeApi(),
+    close: () => {}
+  });
+  const labels = findAll(element, (n) => n.type === 'button').map((n) => textOf(n));
+  assert.ok(labels.includes('检测连接'), labels.join('|'));
+  assert.equal(findAll(element, (n) => n.props && n.props.key === 'napcatCheck').length, 0, '微信卡片不该挂 NapCat 的检测结果');
 });

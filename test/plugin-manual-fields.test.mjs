@@ -6,6 +6,7 @@ import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 
 import { listPlatforms } from '../src/plugin/platforms.mjs';
+import { defaultConfig, normalizeConfig } from '../src/plugin/config-store.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const source = readFileSync(path.join(here, '..', 'lib', 'client.js'), 'utf8');
@@ -102,32 +103,35 @@ function render(extra) {
   return { exports, state, element, text: textOf(element) };
 }
 
-// ---------------- 1. 纯函数：可见字段 ----------------
+// ---------------- 1. 字段表已经整块删掉（连同它那套纯函数） ----------------
 
-test('visibleFields：默认只留 group=basic 的字段', () => {
+test('导出：字段表那套纯函数已经删掉，不留没有界面的死代码', () => {
   const exports = loadClient();
-  const fields = exports.normalizePlatforms(PLATFORMS)[0].fields;
-  const keys = exports.visibleFields(fields, false).map((field) => field.key);
-  assert.deepEqual(keys, ['enabled', 'storage.rootDir', 'log.dir', 'qqOfficial.appId', 'qqOfficial.appSecret', 'security.userWhitelist']);
-  assert.equal(keys.includes('security.userWhitelist'), true, '白名单必须可见：空着不让启动，藏起来等于让新手卡死');
+  for (const name of ['visibleFields', 'groupFields', 'summaryLine', 'GROUP_TITLES', 'SHOW_ALL_FIELDS_LABEL']) {
+    assert.equal(name in exports, false, '界面入口删了，纯函数也必须跟着删：' + name);
+  }
 });
 
-test('visibleFields：开关打开后 advanced 一个不少地回来', () => {
-  const exports = loadClient();
-  const fields = exports.normalizePlatforms(PLATFORMS)[0].fields;
-  const keys = exports.visibleFields(fields, true).map((field) => field.key);
-  assert.equal(keys.length, fields.length);
-  assert.ok(keys.includes('security.userWhitelist'));
-  assert.ok(keys.includes('dsh.runner'));
+test('渲染：整页不再出现「高级设置」「显示全部字段」「更多设置」「数据目录」「日志目录」', () => {
+  const { text } = render();
+  for (const word of ['高级设置', '显示全部字段', '更多设置', '数据目录', '日志目录', '日志单独放一个目录']) {
+    assert.equal(text.includes(word), false, '这些入口必须彻底消失：' + word);
+  }
 });
 
-test('visibleFields：字段表里一个 basic 都没有时整表显示（老版本 host 不能变白页）', () => {
-  const exports = loadClient();
-  const legacy = exports.normalizePlatforms([{ id: 'x', fields: [{ key: 'a' }, { key: 'b' }] }])[0].fields;
-  assert.deepEqual(exports.visibleFields(legacy, false).map((field) => field.key), ['a', 'b']);
-  // 跨 realm 的数组比不了原型，只看元素
-  assert.deepEqual(Array.from(exports.visibleFields([], false)), []);
-  assert.deepEqual(Array.from(exports.visibleFields(undefined, false)), []);
+test('渲染：字段输入框一个都没有了（平台下拉 / 字段输入 / 复选框只剩开机自启）', () => {
+  const { element } = render();
+  assert.equal(findAll(element, (node) => node.props && node.props.id === 'dsh-bot-platform').length, 0);
+  assert.equal(findAll(element, (node) => node.props && String(node.props.id || '').indexOf('dsh-bot-field-') === 0).length, 0);
+  const boxes = findAll(element, (node) => node.type === 'input' && node.props.type === 'checkbox');
+  assert.equal(boxes.length, 1, '页面上只剩顶部「开机自动启动」一个勾选框');
+});
+
+test('渲染：状态里塞了老开关（showAllFields/showManualFields/showLogDir）也放不出字段表', () => {
+  const { text } = render({ showAllFields: true, showManualFields: true, showLogDir: true });
+  for (const word of ['干活方式', '数据目录', '日志目录', '高级设置', '显示全部字段']) {
+    assert.equal(text.includes(word), false, word + ' 不该因为一个脏状态冒出来');
+  }
 });
 
 // ---------------- 2. 字段表口径：默认可见的只有那 10 项（含白名单） ----------------
@@ -196,54 +200,78 @@ test('字段表：数据目录与日志目录的文案是人话', () => {
   assert.equal(byKey.get('log.dir').group, 'basic');
 });
 
-// ---------------- 3. 渲染：默认隐藏 + 底部开关 ----------------
-
-test('渲染：默认态下 advanced 字段（跑法）不可见，basic 字段（含白名单）可见', () => {
-  const { text, state } = render();
-  assert.ok(text.includes('数据目录'), text.slice(0, 200));
-  assert.equal(text.includes('日志目录'), false, '日志目录默认收起（跟随数据目录）');
-  assert.ok(text.includes('用户白名单'), '白名单必须默认可见（空着不让启动）');
-  assert.equal(text.includes('干活方式'), false, 'advanced 字段默认不该出现');
-  assert.equal(state.showAllFields, false);
+test('配置：隐藏字段仍在 DEFAULT_CONFIG / normalize 里，手工改配置文件照样生效', () => {
+  const seeded = defaultConfig();
+  seeded.reply.ack = false;
+  seeded.log.dir = 'E:\\logs';
+  seeded.asr.command = 'whisper';
+  const view = normalizeConfig(seeded);
+  assert.deepEqual(view.problems, [], '手工改的值必须能通过校验');
+  assert.equal(view.config.reply.ack, false);
+  assert.equal(view.config.log.dir, 'E:\\logs');
+  assert.equal(view.config.asr.command, 'whisper');
+  // 没动过的默认值一个都没变
+  assert.equal(view.config.reply.ackMinSeconds, 20);
+  assert.equal(view.config.storage.rootDir, 'E:\\dsh-im-bridge-data');
 });
 
-test('渲染：勾「日志单独放」才出现日志目录输入框', () => {
-  const { text } = render({ showLogDir: true });
-  assert.ok(text.includes('日志目录'), '勾上之后必须能填日志目录');
+// ---------------- 3. 页面只剩四块：顶部动作 / 卡片 / 账号与权限 / 人设与记忆 ----------------
+
+test('渲染：第三个方块是「账号与权限」，只有「谁能用」一个输入框', () => {
+  const { text, element } = render();
+  assert.ok(text.includes('账号与权限'), text.slice(0, 300));
+  assert.ok(text.includes('谁能用：填你自己的 QQ 号 / 微信 wxid，一行一个（空着不让启动）'), text.slice(0, 400));
+  const box = findAll(element, (node) => node.props && node.props.id === 'dsh-bot-whitelist')[0];
+  assert.ok(box, '白名单必须有一个能直接改的框');
+  assert.equal(box.type, 'textarea');
+  assert.equal(box.props.value, '1772538871');
 });
 
-test('渲染：状态里把开关打开后，advanced 字段按分组全部出现', () => {
-  const { text } = render({ showAllFields: true });
-  assert.ok(text.includes('用户白名单'), text.slice(0, 300));
-  assert.ok(text.includes('干活方式'));
-  assert.ok(text.includes('数据目录'), 'basic 字段不该因为放开 advanced 而消失');
+test('渲染：「人设与记忆」在最底下，四块都在，默认收起', () => {
+  const { text, element } = render();
+  assert.ok(text.includes('人设与记忆'), text.slice(0, 300));
+  // 收起时正文挂在树上但 display:none：控件不重建，展开/收起不丢填了一半的值
+  const hidden = findAll(element, (node) => node.props && node.props.style && node.props.style.display === 'none');
+  assert.ok(hidden.length >= 1, '收起态必须有 display:none 的容器');
+  const body = hidden.find((node) => textOf(node).includes('人设'));
+  assert.ok(body, '人设块应该在收起状态里');
+  for (const label of ['人设', '你教过的', '日记', '表情库']) {
+    assert.ok(textOf(body).includes(label), '缺一块：' + label);
+  }
+  const toggle = findAll(element, (node) => node.type === 'button' && node.props.key === 'memoryToggle')[0];
+  assert.ok(toggle, '必须有一个展开它们的按钮');
+  assert.equal(toggle.props['aria-expanded'], false);
+  assert.equal(textOf(toggle), '展开');
 });
 
-test('渲染：底部有「显示全部字段（排查用）」复选框，默认不勾', () => {
-  const { element } = render();
-  const labels = findAll(element, (node) => node.type === 'label' && textOf(node).includes('显示全部字段（排查用）'));
-  assert.equal(labels.length, 1, '必须正好一个开关');
-  const boxes = findAll(labels[0], (node) => node.type === 'input');
-  assert.equal(boxes.length, 1);
-  assert.equal(boxes[0].props.type, 'checkbox');
-  assert.equal(boxes[0].props.checked, false, '默认必须是关的');
-  assert.equal(typeof boxes[0].props.onChange, 'function', '勾选要能改状态');
+test('渲染：展开态（memoryOpen=true）四块内容都在，并且各自读的字段对得上', () => {
+  const { text, element } = render({
+    memoryOpen: true,
+    memoryLoaded: true,
+    personaText: '你叫小号，说话短',
+    lessons: [{ index: 0, when: '2026-01-01 10:00', body: '别人骂你别还嘴' }],
+    journal: [{ title: '2026-01-02 09:00', body: '今天聊了天气' }],
+    stickers: [{ id: 'aaa111', note: '笑' }]
+  });
+  const personaBox = findAll(element, (node) => node.props && node.props.id === 'dsh-bot-persona')[0];
+  assert.ok(personaBox, '人设要有自己的多行文本框');
+  assert.equal(personaBox.props.value, '你叫小号，说话短', '人设正文要显示在文本框里');
+  assert.ok(text.includes('别人骂你别还嘴'), '教过的条目要在列表里');
+  assert.ok(text.includes('今天聊了天气'), '日记最近一条要在列表里');
+  assert.ok(text.includes('1. 笑'), '表情库按序号列出来');
+  assert.ok(text.includes('人设 8 字'), '摘要行跟着四块的真实数量走：' + text.slice(0, 200));
 });
 
-// ---------------- 4. 开关不落配置 ----------------
+// ---------------- 4. 老开关不会落进配置 ----------------
 
-test('开关只在组件内：初始状态是 false，且不会写进配置', () => {
+test('脏状态不落配置：createInitialState 里已经没有 showAllFields / showManualFields / showLogDir', () => {
   const exports = loadClient();
   const initial = exports.createInitialState();
-  assert.equal(initial.showAllFields, false);
-  assert.equal(initial.form.showAllFields, undefined);
-
+  for (const key of ['showAllFields', 'showManualFields', 'showLogDir']) {
+    assert.equal(key in initial, false, '界面删了，状态也删：' + key);
+  }
   const fields = exports.normalizePlatforms(PLATFORMS)[0].fields;
-  const next = exports.buildConfig(CONFIG, fields, {
-    'storage.rootDir': 'E:\\dsh-im-bridge-data',
-    'log.dir': '',
-    showAllFields: true
-  });
+  const next = exports.buildConfig(CONFIG, fields, { 'storage.rootDir': 'E:\\dsh-im-bridge-data' });
   assert.equal('showAllFields' in next, false);
   assert.equal(next.storage.rootDir, 'E:\\dsh-im-bridge-data');
 });

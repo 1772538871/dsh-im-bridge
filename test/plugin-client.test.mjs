@@ -209,7 +209,7 @@ test('加载态渲染不抛，且能看到状态行', () => {
   assert.ok(text.includes('消息接入'), text);
 });
 
-test('就绪态渲染出平台下拉、白名单文本域、数据目录、保存按钮', () => {
+test('就绪态渲染出「账号与权限」的白名单文本域，没有平台下拉也没有数据目录', () => {
   const state = {
     ...loadClient().exports.createInitialState(),
     ...loadClient().exports.snapshotFrom({ platforms: PLATFORMS }, { config: CONFIG, configPath: 'E:\\cfg\\config.json' }),
@@ -218,22 +218,18 @@ test('就绪态渲染出平台下拉、白名单文本域、数据目录、保�
   const { exports } = loadClient({ state });
   const element = exports.DshBotSection({ close: () => {} });
   const text = textOf(element);
-  const selects = findAll(element, (n) => n.type === 'select');
+  assert.equal(findAll(element, (n) => n.type === 'select').length, 0, '字段表的平台下拉已经删了');
   const textareas = findAll(element, (n) => n.type === 'textarea');
+  const whitelist = textareas.filter((n) => n.props.id === 'dsh-bot-whitelist');
+  assert.equal(whitelist.length, 1, '「谁能用」是页面上唯一能直接改的配置项');
+  assert.equal(whitelist[0].props.value, '10001\n10002', 'stringList 用 listToText 铺进文本框');
+  assert.ok(text.includes('谁能用：填你自己的 QQ 号 / 微信 wxid，一行一个（空着不让启动）'), text);
+  assert.equal(text.includes('数据目录'), false, '数据目录不是界面上的东西：' + text);
+  assert.equal(text.includes('配置文件：'), false, '配置文件路径也不摆在页面上了：' + text);
   const buttons = findAll(element, (n) => n.type === 'button');
-  assert.equal(selects.length, 1, '只有平台下拉：platform/enabled 字段由信封控件接管，不重复渲染');
-  assert.equal(selects[0].props.id, 'dsh-bot-platform');
-  assert.equal(textareas.length, 1, 'stringList 字段用 textarea');
-  assert.equal(textareas[0].props.value, '10001\n10002');
-  assert.ok(text.includes('数据目录'), text);
-  assert.ok(buttons.some((b) => textOf(b) === '保存'));
-  assert.ok(buttons.some((b) => textOf(b) === '启动'));
-  assert.ok(buttons.some((b) => textOf(b) === '停止'));
-  assert.ok(buttons.some((b) => textOf(b) === '重启'));
-  // platform/enabled 由信封控件维护，不应在字段组里重复出现
-  const platformLabels = findAll(element, (n) => n.type === 'label').map((n) => textOf(n));
-  assert.ok(!platformLabels.some((label) => label === '平台 *'), platformLabels.join('|'));
-  assert.ok(text.includes('配置文件：E:\\cfg\\config.json'), text);
+  assert.ok(buttons.some((b) => textOf(b) === '保存'), '账号与权限那块要能存');
+  for (const label of ['启动', '停止', '重启']) assert.ok(buttons.some((b) => textOf(b) === label), '缺按钮：' + label);
+  assert.equal(buttons.filter((b) => textOf(b) === '发送测试消息').length, 0, '顶部不许再留测试消息按钮');
 });
 
 test('渲染抛异常时退化成一行提示，不白屏', () => {
@@ -499,31 +495,19 @@ test('switchPlatformForm 保留公共字段的已改输入，换上新平台的�
   assert.ok(!next.fields.some((f) => f.key === 'qqNapcat.wsUrl'));
 });
 
-test('groupFields 只分 basic / advanced 两组，basic 在前', () => {
+test('字段分组函数跟着字段表一起删了；白名单仍走 textToList / listToText', () => {
   const { exports } = loadClient();
-  const fields = exports.groupFields([
-    { key: 'storage.maxFileBytes', type: 'number', group: 'advanced' },
-    { key: 'enabled', type: 'boolean', group: 'basic' },
-    { key: 'storage.rootDir', type: 'text', group: 'basic' },
-    { key: 'log.level', type: 'select', group: 'advanced' }
-  ]);
-  assert.deepEqual(Array.from(fields, (g) => g.group), ['basic', 'advanced']);
-  assert.deepEqual(Array.from(fields[0].fields, (f) => f.key), ['enabled', 'storage.rootDir']);
-  assert.deepEqual(Array.from(fields[1].fields, (f) => f.key), ['storage.maxFileBytes', 'log.level']);
-  assert.equal(fields[0].title, '常用设置');
-  assert.match(fields[1].title, /高级设置/);
-  // 空组不能留下一个空标题
-  assert.deepEqual(Array.from(exports.groupFields([{ key: 'a', group: 'basic' }]), (g) => g.group), ['basic']);
-  assert.deepEqual(Array.from(exports.groupFields([])), []);
+  assert.equal(exports.groupFields, undefined, '分组只服务于已删的字段表');
+  assert.equal(exports.visibleFields, undefined);
+  assert.deepEqual(Array.from(exports.textToList('10001\n 10002 \n\n10003')), ['10001', '10002', '10003']);
+  assert.equal(exports.listToText(['10001', '10002']), '10001\n10002');
 });
 
-test('老版本 host 不下发 group 时整体当 basic 渲染，不把整页塞进折叠区', () => {
+test('老版本 host 不下发 group 时字段仍然保留（分组只影响已删的字段表）', () => {
   const { exports } = loadClient();
   const normalized = exports.normalizePlatforms(PLATFORMS)[0].fields;
-  assert.ok(normalized.every((field) => field.group === 'advanced'), '缺省值是 advanced（新字段默认不进首屏）');
-  assert.deepEqual(Array.from(exports.groupFields(normalized), (g) => g.group), ['basic']);
-  // 非法分组名同样落到 advanced，而不是丢字段
-  assert.equal(exports.normalizeField({ key: 'x', group: '白名单' }).group, 'advanced');
+  assert.ok(normalized.every((field) => field.group === 'advanced'), '缺省值是 advanced');
+  assert.equal(exports.normalizeField({ key: 'x', group: '白名单' }).group, 'advanced', '非法分组名不丢字段');
   assert.equal(exports.normalizeField({ key: 'x', group: 'BASIC' }).group, 'basic');
 });
 
@@ -681,7 +665,7 @@ async function settle(fake, render) {
   return render();
 }
 
-test('交互：读配置 → 改白名单/启用 → 点保存，POST body 是 {config}', async () => {
+test('交互：改「谁能用」→ 点保存，POST /config 只带白名单那一个字段', async () => {
   const calls = [];
   let lastSave = null;
   const fetchImpl = async (url, init) => {
@@ -707,10 +691,8 @@ test('交互：读配置 → 改白名单/启用 → 点保存，POST body 是 {
   const { render, fake } = mountSection(fetchImpl);
   let element = await settle(fake, render);
   assert.ok(textOf(element).includes('已停止'), textOf(element));
-  assert.ok(textOf(element).includes('数据目录'), '字段来自 host 下发的字段表');
 
   findAll(element, (n) => n.type === 'textarea')[0].props.onChange({ target: { value: '20002\n20003' } });
-  findAll(element, (n) => n.type === 'input' && n.props.type === 'checkbox')[0].props.onChange({ target: { checked: true } });
   element = render();
   findAll(element, (n) => n.type === 'button' && textOf(n) === '保存')[0].props.onClick();
   await tick();
@@ -718,10 +700,14 @@ test('交互：读配置 → 改白名单/启用 → 点保存，POST body 是 {
 
   assert.ok(textOf(element).includes('已保存'), textOf(element));
   assert.equal(lastSave !== null, true);
+  // 只回传白名单：整份配置回传会把用户手改过的隐藏字段冲回默认值
+  assert.deepEqual(Object.keys(lastSave), ['config']);
+  assert.deepEqual(Object.keys(lastSave.config), ['security']);
+  assert.deepEqual(Object.keys(lastSave.config.security), ['userWhitelist']);
   assert.deepEqual(Array.from(lastSave.config.security.userWhitelist), ['20002', '20003']);
-  assert.equal(lastSave.config.enabled, true);
-  assert.equal(lastSave.config.qqNapcat.accessToken, '***', '未修改的密码原样往返，不被前端覆盖');
-  assert.equal(lastSave.config.storage.maxFileBytes, 1, '字段表外的配置项必须原样带回');
+  assert.ok(!('enabled' in lastSave.config), '开机自启由顶部勾选框单独管，不挤进白名单这次保存');
+  assert.ok(!('qqNapcat' in lastSave.config), '令牌与地址不从界面回传');
+  assert.ok(!('storage' in lastSave.config), 'storage.maxFileBytes 这类隐藏项一个字都不许被带走');
 
   findAll(element, (n) => n.type === 'button' && textOf(n) === '停止')[0].props.onClick();
   await tick();
@@ -750,7 +736,7 @@ test('交互：保存被拒 → 页面显示 problems，不显示成功', async 
   assert.ok(!text.includes('已保存'), text);
 });
 
-test('交互：切平台后字段表跟着换，公共字段的编辑保留', async () => {
+test('交互：点平台卡片切换接入卡片，白名单里正在打的字不会被清掉', async () => {
   const fetchImpl = async (url) => {
     if (url === '/dsh-bot/api/platforms') return jsonResponse({ ok: true, platforms: PLATFORMS });
     if (url === '/dsh-bot/api/config') return jsonResponse({ ok: true, config: CONFIG, warnings: [], configPath: 'p' });
@@ -758,14 +744,19 @@ test('交互：切平台后字段表跟着换，公共字段的编辑保留', as
   };
   const { render, fake } = mountSection(fetchImpl);
   let element = await settle(fake, render);
-  findAll(element, (n) => n.type === 'textarea')[0].props.onChange({ target: { value: '30003' } });
+  findAll(element, (n) => n.type === 'textarea' && n.props.id === 'dsh-bot-whitelist')[0].props.onChange({ target: { value: '30003' } });
   element = render();
-  findAll(element, (n) => n.type === 'select')[0].props.onChange({ target: { value: 'qq-official' } });
+  // 卡片切换走的是左栏平台卡片（字段表的下拉已经删了）
+  const cards = findAll(element, (n) => n.type === 'button' && Object.prototype.hasOwnProperty.call(n.props, 'aria-pressed'));
+  const official = cards.filter((n) => textOf(n).includes('官方'))[0];
+  assert.ok(official, '必须有「官方机器人」那张卡片：' + cards.map((n) => textOf(n)).join('|'));
+  official.props.onClick();
   element = render();
   const text = textOf(element);
   assert.ok(text.includes('AppID'), text);
   assert.ok(!text.includes('WebSocket 地址'), text);
-  assert.equal(findAll(element, (n) => n.type === 'textarea')[0].props.value, '30003');
+  assert.equal(findAll(element, (n) => n.type === 'textarea' && n.props.id === 'dsh-bot-whitelist')[0].props.value, '30003');
+  assert.equal(findAll(element, (n) => n.type === 'select').length, 0);
 });
 
 test('交互：网络全挂时页面是一行提示，不是白屏', async () => {
@@ -778,7 +769,7 @@ test('交互：网络全挂时页面是一行提示，不是白屏', async () =>
   assert.ok(text.includes('ECONNREFUSED'), text);
 });
 
-test('交互：点「发送测试消息」→ POST /test-send，成功显示发给谁', async () => {
+test('交互：点卡片里的「发条测试消息」→ POST /test-send，成功显示发给谁', async () => {
   let lastTest = null;
   const fetchImpl = async (url, init) => {
     if (url === '/dsh-bot/api/platforms') return jsonResponse({ ok: true, platforms: PLATFORMS });
@@ -791,7 +782,9 @@ test('交互：点「发送测试消息」→ POST /test-send，成功显示发�
   };
   const { render, fake } = mountSection(fetchImpl);
   let element = await settle(fake, render);
-  findAll(element, (n) => n.type === 'button' && textOf(n) === '发送测试消息')[0].props.onClick();
+  // 顶部那个按钮删掉了：发测试消息只在接入卡片里
+  assert.equal(findAll(element, (n) => n.type === 'button' && textOf(n) === '发送测试消息').length, 0);
+  findAll(element, (n) => n.type === 'button' && textOf(n) === '发条测试消息')[0].props.onClick();
   await tick();
   element = render();
   assert.ok(textOf(element).includes('已发送给 10001'), textOf(element));
@@ -809,7 +802,7 @@ test('交互：测试消息发不出去时显示人话原因，不说"已发送"
   };
   const { render, fake } = mountSection(fetchImpl);
   let element = await settle(fake, render);
-  findAll(element, (n) => n.type === 'button' && textOf(n) === '发送测试消息')[0].props.onClick();
+  findAll(element, (n) => n.type === 'button' && textOf(n) === '发条测试消息')[0].props.onClick();
   await tick();
   element = render();
   const text = textOf(element);
@@ -851,7 +844,7 @@ test('交互：平台不一致时把服务端那句话原样显示，不自己�
   };
   const { render, fake } = mountSection(fetchImpl);
   let element = await settle(fake, render);
-  findAll(element, (n) => n.type === 'button' && textOf(n) === '发送测试消息')[0].props.onClick();
+  findAll(element, (n) => n.type === 'button' && textOf(n) === '发条测试消息')[0].props.onClick();
   await tick();
   element = render();
   const text = textOf(element);
@@ -897,7 +890,7 @@ test('交互：点「用这个小号」-> 存 platform=qq-napcat 再重启，回
   assert.equal(calls[0].config.qqNapcat.accessToken, '***', 'accessToken 用现值（宿主按掩码合并）');
   assert.equal(calls[1].action, 'restart');
   assert.ok(text.includes('已切到小号，正在重启…'), text);
-  assert.ok(text.includes('平台 QQ 个人账号'), '摘要要跟着刷新：' + text);
+  assert.ok(text.includes('账号与权限'), '别的块照样在：' + text);
   assert.equal(findAll(element, (n) => n.type === 'button' && textOf(n) === '用这个小号').length, 0, '切过去之后按钮就该消失');
 });
 
