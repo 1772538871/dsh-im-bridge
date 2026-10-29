@@ -199,10 +199,15 @@ test('字段表：数据目录与日志目录的文案是人话', () => {
 test('渲染：默认态下 advanced 字段（跑法）不可见，basic 字段（含白名单）可见', () => {
   const { text, state } = render();
   assert.ok(text.includes('数据目录'), text.slice(0, 200));
-  assert.ok(text.includes('日志目录'));
+  assert.equal(text.includes('日志目录'), false, '日志目录默认收起（跟随数据目录）');
   assert.ok(text.includes('用户白名单'), '白名单必须默认可见（空着不让启动）');
   assert.equal(text.includes('干活方式'), false, 'advanced 字段默认不该出现');
   assert.equal(state.showAllFields, false);
+});
+
+test('渲染：勾「日志单独放」才出现日志目录输入框', () => {
+  const { text } = render({ showLogDir: true });
+  assert.ok(text.includes('日志目录'), '勾上之后必须能填日志目录');
 });
 
 test('渲染：状态里把开关打开后，advanced 字段按分组全部出现', () => {
