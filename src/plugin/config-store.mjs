@@ -37,7 +37,7 @@ export const DEFAULT_CONFIG = {
     maxChunkChars: 1500,
     errorPrefix: '[bridge] ',
     showSessionId: false,
-    ack: true,
+    ack: false,
     ackMinSeconds: 20,
     askWhenUnclear: true,
     progressEveryMs: 45000,
