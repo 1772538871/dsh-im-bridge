@@ -4,6 +4,8 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 const CONFIG_NAME = 'bridge.config.json';
 const PERMISSION_MODES = ['read-only', 'workspace-write', 'danger-full-access'];
 const LOG_LEVELS = ['debug', 'info', 'warn', 'error'];
+// 与 src/pipeline.mjs 的 ACK_TONES 保持一致：这里只做"写错词要报出来"的校验
+const ACK_TONES = ['casual', 'plain'];
 
 const DEFAULTS = {
   onebot: { wsUrl: 'ws://127.0.0.1:3001', accessToken: '', reconnectMinMs: 1000, reconnectMaxMs: 30000 },
@@ -19,7 +21,10 @@ const DEFAULTS = {
     maxConcurrentRuns: 2,
     maxPromptChars: 8000
   },
-  reply: { maxChunkChars: 1500, errorPrefix: '[bridge] ', showSessionId: false },
+  // ackTone 与 src/pipeline.mjs 的 ACK_TONES 同一个集合：casual=贴吧口气，plain=中性
+  reply: { maxChunkChars: 1500, errorPrefix: '[bridge] ', showSessionId: false, ackTone: 'casual' },
+  // 人格自进化：每 N 轮自动写一次日记（0=只在 /日记 时写）
+  journal: { everyTurns: 0 },
   asr: { command: '', args: [], timeoutMs: 60000 },
   // intents 默认 GROUP_AND_C2C_EVENT = 1 << 25：单聊与群 @ 事件同属这一位
   qqbot: {
@@ -254,6 +259,7 @@ function normalize(raw, options) {
   const storageRaw = section('storage');
   const securityRaw = section('security');
   const replyRaw = section('reply');
+  const journalRaw = section('journal');
   const asrRaw = section('asr');
   const qqbotRaw = section('qqbot');
   const logRaw = section('log');
@@ -280,6 +286,12 @@ function normalize(raw, options) {
 
   const profile = text(dshRaw, 'dsh', 'profile', DEFAULTS.dsh.profile).trim();
   if (!profile) problems.push('dsh.profile 不能为空');
+
+  const ackToneRaw = text(replyRaw, 'reply', 'ackTone', DEFAULTS.reply.ackTone).trim().toLowerCase();
+  const ackTone = ACK_TONES.indexOf(ackToneRaw) === -1 ? DEFAULTS.reply.ackTone : ackToneRaw;
+  if (ACK_TONES.indexOf(ackToneRaw) === -1) {
+    problems.push('reply.ackTone 必须是 ' + ACK_TONES.join(' / ') + ' 之一，当前为 ' + JSON.stringify(ackToneRaw));
+  }
 
   const permissionMode = text(dshRaw, 'dsh', 'permissionMode', DEFAULTS.dsh.permissionMode).trim();
   if (PERMISSION_MODES.indexOf(permissionMode) === -1) {
@@ -356,7 +368,11 @@ function normalize(raw, options) {
     reply: {
       maxChunkChars: num(replyRaw, 'reply', 'maxChunkChars', DEFAULTS.reply.maxChunkChars, 1),
       errorPrefix: text(replyRaw, 'reply', 'errorPrefix', DEFAULTS.reply.errorPrefix),
-      showSessionId: bool(replyRaw, 'reply', 'showSessionId', DEFAULTS.reply.showSessionId)
+      showSessionId: bool(replyRaw, 'reply', 'showSessionId', DEFAULTS.reply.showSessionId),
+      ackTone
+    },
+    journal: {
+      everyTurns: num(journalRaw, 'journal', 'everyTurns', DEFAULTS.journal.everyTurns, 0)
     },
     asr: {
       command: text(asrRaw, 'asr', 'command', DEFAULTS.asr.command),

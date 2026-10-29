@@ -2,9 +2,13 @@ import { stat } from 'node:fs/promises';
 import { isAbsolute, join, posix, win32 } from 'node:path';
 import { transcribe as defaultTranscribe } from "./asr.mjs";
 import {
+  commandAdoptDoneText,
+  commandAdoptMissingText,
   commandExportDoneText,
   commandExportFailedText,
   commandHelpText,
+  commandJournalDoneText,
+  commandJournalFailedText,
   commandNewSessionText,
   commandStatusText,
   defaultDshHome,
@@ -12,6 +16,16 @@ import {
   parseCommand,
 } from './commands.mjs';
 import { formatForQq } from './format.mjs';
+import {
+  adoptSuggestedPersona,
+  appendJournalEntry,
+  buildIntrospectionPrompt,
+  parseIntrospection,
+  promptsDirOf,
+  readJournalTail,
+  readPersona,
+  writeSuggestedPersona,
+} from './journal.mjs';
 import { buildPrompt } from "./prompt.mjs";
 import { createSessionBinding } from './session-binding.mjs';
 
@@ -24,6 +38,96 @@ const DEFAULT_MAX_FILE_BYTES = 104857600;
 // 模拟打字的停顿上限：真人不会因为一段长文就让你等半分钟
 const DEFAULT_SEND_DELAY_MAX_MS = 3000;
 const SEND_DELAY_JITTER = 0.2;
+
+// 回执与进度的口语池。写死一句"收到，开始处理了（预计半分钟左右）"再拼上项目符号，
+// 是"一眼就是 AI"的根因：真人每次说法都不一样，也不会先报一个预计时间。
+// 三组句子因此都按"一口气能说完"来写：一处 ≤ 12 字、不带符号、不带任何数字或时间词。
+export const PHRASE_MAX_CHARS = 12;
+// 估时超过这个秒数才算"要等一会儿"，短活儿说长话反而更假
+export const LONG_TASK_SECONDS = 12;
+
+// 两套口吻，一套一套地读：casual 是会跟你在同一个群里混的那种口气（小傲娇、带点嘴臭，
+// 但不脏、不攻击人），plain 是纯中性。作者自己都不知道你喜欢哪种，所以由配置选。
+export const DEFAULT_ACK_TONE = 'casual';
+export const ACK_TONES = {
+  casual: {
+    short: [
+      '行吧，我看看',
+      '急啥，瞅一眼',
+      '好好好，我看',
+      '来了来了',
+      '等着，看一眼',
+      '嗯？我看看',
+      '看呢看呢',
+      '别催，这不看了',
+      '瞅一眼的事',
+      '行行行，我来',
+    ],
+    long: [
+      '这活儿有点麻烦',
+      '别催，正弄着呢',
+      '慢慢等吧你',
+      '我先折腾会儿',
+      '这得磨叽一下',
+      '弄完喊你',
+      '急不来，得弄会儿',
+      '有点费劲，等着',
+      '忙上了，别敲门',
+      '这个真得花点时间',
+      '我啃一下这活儿',
+    ],
+    progress: ['还没好，急啥', '手还占着呢', '快了快了', '别盯了', '马上完事', '就快了就快了', '耐心点，快了', '我这不忙着呢'],
+  },
+  plain: {
+    short: ['马上看', '这就看', '我看看', '等我一下', '好，我看看', '收到，马上看', '稍等，我看下', '这就开始', '行，我看下', '我这就弄'],
+    long: [
+      '这个要一会儿',
+      '得弄一会儿',
+      '这个稍微久点',
+      '我先弄着',
+      '等我一下，稍久',
+      '活儿不小，等我',
+      '这个得慢慢来',
+      '弄好了叫你',
+      '好了我跟你说',
+      '先弄着，别急',
+      '这个要花点时间',
+    ],
+    progress: ['还在弄', '快了快了', '马上就好', '快了，稍等', '还在弄，别急', '快弄完了', '就快好了'],
+  },
+};
+
+/** 认不出来的口吻一律退回默认：配置里写错一个词不该让回执哑掉。 */
+export function toneOf(raw) {
+  const key = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+  return Object.prototype.hasOwnProperty.call(ACK_TONES, key) ? key : DEFAULT_ACK_TONE;
+}
+
+export function toneLines(raw, kind) {
+  return ACK_TONES[toneOf(raw)][kind];
+}
+
+/**
+ * 从池子里抽一句，但绝不让同一句连着出现两次。
+ * 抽到上一句就重抽（最多 maxTries 次）；随机源被卡死（测试里就这么造）时退一句，
+ * 因为"连着两条一模一样的回执"比随机得不均匀难看得多。
+ */
+export function pickLine(list, { random = Math.random, previous = null, maxTries = 3 } = {}) {
+  if (!Array.isArray(list) || list.length === 0) return typeof previous === "string" ? previous : "";
+  const length = list.length;
+  const drawAt = () => {
+    const value = typeof random === "function" ? Number(random()) : NaN;
+    if (!Number.isFinite(value)) return list[(Math.max(0, list.indexOf(previous)) + 1) % length];
+    const index = Math.floor(value * length);
+    return list[((index % length) + length) % length];
+  };
+  const tries = Number.isFinite(maxTries) && maxTries >= 1 ? Math.floor(maxTries) : 1;
+  for (let attempt = 0; attempt < tries; attempt += 1) {
+    const line = drawAt();
+    if (line !== previous) return line;
+  }
+  return list[(list.indexOf(previous) + 1) % length];
+}
 
 // 三种媒体标记语义完全一致（单独一行、绝对路径、最多 3 个），只有平台侧的段类型不同。
 // 顺序即发送顺序，也即说明文字的先后顺序。
@@ -262,6 +366,16 @@ export function createPipeline({
   };
 
   const errorPrefix = config?.reply?.errorPrefix ?? DEFAULT_ERROR_PREFIX;
+
+  // 上一次说过的那句话：回执与进度各记一份，连发两条一样的话最像机器
+  const lastLine = { ack: null, progress: null };
+  const ackTone = toneOf(config?.reply?.ackTone);
+  // 内省要回顾"刚才聊了什么"，只留最近 20 轮；它不进提示词，也不落盘
+  const RECENT_TURNS_MAX = 20;
+  const recentTurns = [];
+  // 后台内省挂在这里，测试用 settle() 等它落盘；生产上没人等它
+  const background = new Set();
+  let turnsSinceJournal = 0;
 
   // cwd_missing 的文案要带具体路径，静态表办不到，单独处理
   const failureText = (reason, result) => {
@@ -533,19 +647,125 @@ export function createPipeline({
     return Math.min(1800, Math.max(5, raw));
   }
 
-  /** 不给假精确的秒数：按量级说人话，用户才不会盯着数字较真。 */
-  function phraseOfSeconds(seconds) {
-    if (seconds <= 12) return "几秒";
-    if (seconds <= 45) return "半分钟左右";
-    if (seconds <= 150) return "一两分钟";
-    return "几分钟";
+  function nextLine(list, channel, resolved) {
+    const line = pickLine(list, { random: resolved?.random, previous: lastLine[channel] ?? null });
+    lastLine[channel] = line;
+    return line;
   }
 
-  function ackTextOf(message, saved, seconds) {
-    const lines = ["收到，开始处理了（预计" + phraseOfSeconds(seconds) + "）"];
-    if (Array.isArray(saved) && saved.length > 0) lines.push("· 附件 " + saved.length + " 个已经存好");
-    lines.push(seconds >= 60 ? "这活儿要一会儿，我会隔一阵报个进度" : "干完我把结果发你");
+  /** 附件只说一句人话，而且只在长任务里说：短活儿还报一遍"收到 2 个文件"很像报销。 */
+  function attachmentNoteOf(saved) {
+    const items = (Array.isArray(saved) ? saved : []).filter(
+      (item) => item && typeof item.path === "string" && item.path !== "",
+    );
+    if (items.length === 0) return "";
+    const kinds = new Set(items.map((item) => item.kind));
+    const unit =
+      kinds.size === 1 ? (kinds.has("image") ? "张图片" : kinds.has("record") ? "条语音" : "个文件") : "个附件";
+    return "收到 " + items.length + " " + unit;
+  }
+
+  function ackTextOf({ saved, seconds, resolved }) {
+    const longTask = seconds > LONG_TASK_SECONDS;
+    const lines = [nextLine(toneLines(ackTone, longTask ? "long" : "short"), "ack", resolved)];
+    if (longTask) {
+      const note = attachmentNoteOf(saved);
+      if (note !== "") lines.push(note);
+    }
     return lines.join("\n");
+  }
+
+  function dataRootDir() {
+    const fromStorage = typeof storage?.rootDir === "string" && storage.rootDir !== "" ? storage.rootDir : "";
+    if (fromStorage !== "") return fromStorage;
+    const fromConfig = config?.storage?.rootDir;
+    return typeof fromConfig === "string" ? fromConfig : "";
+  }
+
+  function promptsDir() {
+    return promptsDirOf(dataRootDir());
+  }
+
+  function journalEveryTurns() {
+    const raw = Number(config?.journal?.everyTurns);
+    return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 0;
+  }
+
+  function rememberTurn(message, replyText) {
+    const user = typeof message?.text === "string" ? message.text.replace(/\s+/gu, " ").trim().slice(0, 400) : "";
+    const assistant = typeof replyText === "string" ? replyText.replace(/\s+/gu, " ").trim().slice(0, 400) : "";
+    if (user === "" && assistant === "") return;
+    recentTurns.push({ user, assistant });
+    if (recentTurns.length > RECENT_TURNS_MAX) recentTurns.shift();
+  }
+
+  /**
+   * 一次内省：角色卡 + 日记尾巴 + 最近这些对话 → 独立提示词 → 日记追加、人格建议覆盖。
+   * 用新会话跑：日记是本子，不是正在聊的那条上下文。
+   */
+  async function runIntrospection({ now = new Date() } = {}) {
+    const dir = promptsDir();
+    if (dir === "") return { ok: false, reason: "没有数据目录（storage.rootDir 为空）" };
+
+    const persona = await readPersona({ promptsDir: dir });
+    const journal = readJournalTail({ promptsDir: dir });
+    const prompt = buildIntrospectionPrompt({ recent: recentTurns.slice(-RECENT_TURNS_MAX), persona, journal, now });
+
+    let outcome;
+    try {
+      outcome = await semaphore.withPermit(() => runDsh({ config, prompt, sessionId: null, logger }));
+    } catch (error) {
+      return { ok: false, reason: "调用 DSH 失败：" + String(error?.message ?? error) };
+    }
+    if (!outcome?.ok || typeof outcome.text !== "string" || outcome.text.trim() === "") {
+      return { ok: false, reason: failureText(outcome?.reason ?? "no_final", outcome) };
+    }
+
+    const parsed = parseIntrospection(outcome.text);
+    if (parsed.diary === "" && parsed.suggestion === "") {
+      return { ok: false, reason: "模型这次没按格式写（没有可用段落）" };
+    }
+    const wrote = await appendJournalEntry({ promptsDir: dir, body: parsed.diary, now });
+    const suggested = await writeSuggestedPersona({ promptsDir: dir, text: parsed.suggestion });
+    if (!wrote.ok && !suggested.ok) return { ok: false, reason: wrote.reason };
+    return {
+      ok: true,
+      diaryLines: wrote.ok ? wrote.lines : 0,
+      suggestionLines: suggested.ok ? suggested.lines : 0,
+    };
+  }
+
+  function trackJournal(promise) {
+    const task = Promise.resolve(promise)
+      .catch((error) => {
+        logger?.warn?.("内省出错", { error: String(error?.message ?? error) });
+      })
+      .finally(() => {
+        background.delete(task);
+      });
+    background.add(task);
+    return task;
+  }
+
+  /** 等所有后台内省落盘（只有测试需要；生产上没人等它）。 */
+  async function settle() {
+    while (background.size > 0) await Promise.all([...background]);
+  }
+
+  /** 每 N 轮自动写一次日记：回复已经发出去了，只写文件、不再打扰用户。 */
+  function maybeJournalAfterTurn() {
+    const every = journalEveryTurns();
+    if (every === 0) return;
+    turnsSinceJournal += 1;
+    if (turnsSinceJournal < every) return;
+    turnsSinceJournal = 0;
+    void trackJournal(runIntrospection()).then((outcome) => {
+      if (outcome?.ok) {
+        logger?.info?.("已自动写日记", { diaryLines: outcome.diaryLines, suggestionLines: outcome.suggestionLines });
+      } else {
+        logger?.warn?.("自动写日记没成功", { reason: outcome?.reason });
+      }
+    });
   }
 
   async function readSession(key) {
@@ -570,9 +790,8 @@ export function createPipeline({
   }
 
   function historyDir() {
-    const fromStorage = typeof storage?.rootDir === 'string' && storage.rootDir !== '' ? storage.rootDir : '';
-    const rootDir = fromStorage !== '' ? fromStorage : config?.storage?.rootDir;
-    return typeof rootDir === 'string' && rootDir !== '' ? join(rootDir, 'history') : '';
+    const rootDir = dataRootDir();
+    return rootDir === '' ? '' : join(rootDir, 'history');
   }
 
   function pendingCountOf(bridgeService) {
@@ -589,8 +808,8 @@ export function createPipeline({
     return recentDurations.length === 0 ? null : recentDurations[recentDurations.length - 1].ms;
   }
 
-  /** 命令不进 DSH：就地回一句，不占并发额度、也不产生一轮对话。 */
-  async function handleCommand({ command, message, chatKey }) {
+  /** 命令不进 DSH：就地回一句，不占并发额度、也不产生一轮对话（/日记 例外，它要跑一轮内省）。 */
+  async function handleCommand({ command, message, chatKey, resolved }) {
     if (command.name === 'help') {
       await deliver(message, commandHelpText({ sessionId: await readSession(chatKey) }));
       return;
@@ -614,6 +833,35 @@ export function createPipeline({
           questionPending: pendingCountOf(questionBridge),
         }),
       );
+      return;
+    }
+    if (command.name === 'journal') {
+      // 写日记要跑一轮模型，先给一句人话，免得用户以为命令没被认出来
+      await deliver(message, nextLine(toneLines(ackTone, "short"), "ack", resolved));
+      const outcome = await runIntrospection({});
+      if (outcome.ok) {
+        logger?.info?.('已写日记', { chatKey, diaryLines: outcome.diaryLines, suggestionLines: outcome.suggestionLines });
+        await deliver(message, commandJournalDoneText(outcome));
+      } else {
+        logger?.warn?.('写日记失败', { chatKey, reason: outcome.reason });
+        await deliver(message, commandJournalFailedText(outcome.reason));
+      }
+      return;
+    }
+    if (command.name === 'adopt') {
+      const outcome = await adoptSuggestedPersona({ promptsDir: promptsDir() });
+      if (!outcome.ok) {
+        logger?.info?.('没有可采纳的人格建议', { chatKey, reason: outcome.reason });
+        await deliver(message, commandAdoptMissingText());
+        return;
+      }
+      logger?.info?.('已采纳人格建议', {
+        chatKey,
+        replaced: outcome.replaced,
+        appended: outcome.appended,
+        backupPath: outcome.backupPath,
+      });
+      await deliver(message, commandAdoptDoneText(outcome));
       return;
     }
     if (command.name === 'export') {
@@ -672,7 +920,7 @@ export function createPipeline({
       await serial.run(chatKey, async () => {
         const command = parseCommand(typeof message?.text === 'string' ? message.text : '');
         if (command !== null) {
-          await handleCommand({ command, message, chatKey });
+          await handleCommand({ command, message, chatKey, resolved });
           return;
         }
 
@@ -693,7 +941,7 @@ export function createPipeline({
           const progressEvery = Number.isFinite(everyMs) && everyMs >= 10000 ? Math.floor(everyMs) : 45000;
           const maxRaw = Number(config?.reply?.progressMax);
           const progressMax = Number.isFinite(maxRaw) && maxRaw >= 0 ? Math.floor(maxRaw) : 2;
-          if (ackOn) await deliver(message, ackTextOf(message, saved, seconds));
+          if (ackOn) await deliver(message, ackTextOf({ saved, seconds, resolved }));
           const startedAt = Date.now();
           let progressTimer = null;
           let progressSent = 0;
@@ -701,8 +949,8 @@ export function createPipeline({
             progressTimer = setInterval(() => {
               if (progressSent >= progressMax) return;
               progressSent += 1;
-              const used = Math.round((Date.now() - startedAt) / 1000);
-              void deliver({ ...message, messageId: "" }, "还在处理：已用 " + used + " 秒" + (progressSent < progressMax ? "，完了我立刻发结果" : "，快好了"));
+              // 不报秒数：真人不会掐着表告诉你"已用 45 秒"，那正是最刺眼的一句机器话
+              void deliver({ ...message, messageId: "" }, nextLine(toneLines(ackTone, "progress"), "progress", resolved));
             }, progressEvery);
             progressTimer.unref?.();
           }
@@ -739,6 +987,9 @@ export function createPipeline({
             if (config?.reply?.showSessionId && result.sessionId) text += `\n[session ${result.sessionId}]`;
             await deliver(message, text, { humanDelay: true });
             counters.handled += 1;
+            rememberTurn(message, typeof result.text === "string" ? result.text : "");
+            // 排在回复之后：自动日记只写文件，不该让用户多收到一条消息
+            maybeJournalAfterTurn();
             return;
           }
 
@@ -760,5 +1011,5 @@ export function createPipeline({
     }
   }
 
-  return { handleEvent, stats: () => ({ ...counters }) };
+  return { handleEvent, stats: () => ({ ...counters }), settle };
 }

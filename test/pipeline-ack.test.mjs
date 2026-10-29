@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createPipeline } from '../src/pipeline.mjs';
+import { ACK_TONES, createPipeline } from '../src/pipeline.mjs';
+
+// 回执是句池里随机抽的：断言"它来自池子"，而不是断言某一句模板（模板正是要去掉的东西）
+const ACK_LINES = [...ACK_TONES.casual.short, ...ACK_TONES.casual.long, ...ACK_TONES.plain.short, ...ACK_TONES.plain.long];
 
 function makePipeline({ runDsh, config = {} }) {
   const sent = [];
@@ -29,11 +32,11 @@ function makePipeline({ runDsh, config = {} }) {
   return { pipeline, sent };
 }
 
-test('长任务：先回一条"收到"回执，任务完了再给结果', async () => {
+test('长任务：先回一句人话回执，任务完了再给结果', async () => {
   const { pipeline, sent } = makePipeline({ runDsh: async () => ({ ok: true, text: '这是结果', sessionId: 'S1' }) });
   await pipeline.handleEvent({});
   assert.equal(sent.length, 2);
-  assert.match(sent[0], /收到/);
+  assert.ok(ACK_LINES.includes(sent[0]), sent[0]);
   assert.equal(sent[1], '这是结果');
 });
 
@@ -51,5 +54,5 @@ test('超过进度阈值会补报进度（不占被动回复配额，用主动�
   // 直接验证"回执里有进度承诺"，而不真的等 10 秒
   await pipeline.handleEvent({});
   assert.ok(sent.length >= 2);
-  assert.match(sent[0], /收到/);
+  assert.ok(ACK_LINES.includes(sent[0]), sent[0]);
 });

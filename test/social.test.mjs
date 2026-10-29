@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 
-import { createPipeline } from "../src/pipeline.mjs";
+import { ACK_TONES, createPipeline } from "../src/pipeline.mjs";
 import { createGuard } from "../src/security.mjs";
 import { defaultConfig, getByPath, normalizeConfig } from "../src/plugin/config-store.mjs";
 import { listPlatforms } from "../src/plugin/platforms.mjs";
@@ -121,7 +121,8 @@ test("延迟：回执和进度不受影响，只有最终回复才等", async ()
   await h.pipeline.handleEvent({ message: makeMessage() });
   assert.equal(h.replies.length, 2);
   assert.equal(h.sleeps.length, 1);
-  assert.match(h.replies[0], /^收到，开始处理了/);
+  // 回执来自句池（默认 casual 口吻），且没有被打字停顿拖慢
+  assert.ok(ACK_TONES.casual.short.includes(h.replies[0]), h.replies[0]);
 });
 
 // ---- 回复总长上限 ----

@@ -13,6 +13,8 @@ const PERMISSION_MODES = ['read-only', 'workspace-write', 'danger-full-access'];
 // inprocess=直接在 DSH 主进程里建 Agent（最快，而且能把审批请求转发到 IM，但依赖 DSH 内部服务）
 export const DSH_RUNNERS = ['headless', 'sdk', 'inprocess'];
 const LOG_LEVELS = ['debug', 'info', 'warn', 'error'];
+// 回执口吻（与 src/pipeline.mjs 的 ACK_TONES 同名）：写错的词回落默认，不静默
+export const ACK_TONE_IDS = ['casual', 'plain'];
 
 export const DEFAULT_CONFIG = {
   enabled: false,
@@ -42,8 +44,12 @@ export const DEFAULT_CONFIG = {
     sendDelayMs: 0,
     sendDelayMaxMs: 3000,
     // 0=不限。超了先截断再分段，免得把被动回复次数用光
-    maxReplyChars: 0
+    maxReplyChars: 0,
+    // 回执口吻：casual=贴吧群友口气（默认），plain=中性
+    ackTone: 'casual'
   },
+  // 人格自进化：每 N 轮自动写一次日记（0=只在用户发 /日记 时写）
+  journal: { everyTurns: 0 },
   // 拟人层：群里没 @ 也接话。今天只做被动触发（消息到了才判断），没有定时器
   social: { mustReplyKeywords: [], replyProbability: 0 },
   // 只对 inprocess 有意义：把 DSH 的审批请求转发到 IM，超时按拒绝处理（5 分钟）
@@ -313,6 +319,7 @@ export function normalizeConfig(raw, options = {}) {
   const storageRaw = section('storage');
   const securityRaw = section('security');
   const replyRaw = section('reply');
+  const journalRaw = section('journal');
   const socialRaw = section('social');
   const approvalRaw = section('approval');
   const questionsRaw = section('questions');
@@ -376,6 +383,12 @@ export function normalizeConfig(raw, options = {}) {
     permissionMode = DEFAULT_CONFIG.dsh.permissionMode;
   }
 
+  const ackToneRaw = readText(replyRaw, 'reply.ackTone', 'ackTone', DEFAULT_CONFIG.reply.ackTone, true).toLowerCase();
+  const ackTone = ACK_TONE_IDS.indexOf(ackToneRaw) === -1 ? DEFAULT_CONFIG.reply.ackTone : ackToneRaw;
+  if (ACK_TONE_IDS.indexOf(ackToneRaw) === -1) {
+    problems.push('reply.ackTone 必须是 ' + ACK_TONE_IDS.join(' / ') + ' 之一，当前为 ' + JSON.stringify(ackToneRaw));
+  }
+
   const config = {
     enabled: readBool(src, 'enabled', 'enabled', DEFAULT_CONFIG.enabled),
     platform: PLATFORM_IDS.indexOf(platform) === -1 ? DEFAULT_CONFIG.platform : platform,
@@ -404,7 +417,11 @@ export function normalizeConfig(raw, options = {}) {
       progressMax: readInt(replyRaw, 'reply.progressMax', 'progressMax', DEFAULT_CONFIG.reply.progressMax, 0),
       sendDelayMs: readInt(replyRaw, 'reply.sendDelayMs', 'sendDelayMs', DEFAULT_CONFIG.reply.sendDelayMs, 0),
       sendDelayMaxMs: readInt(replyRaw, 'reply.sendDelayMaxMs', 'sendDelayMaxMs', DEFAULT_CONFIG.reply.sendDelayMaxMs, 0),
-      maxReplyChars: readInt(replyRaw, 'reply.maxReplyChars', 'maxReplyChars', DEFAULT_CONFIG.reply.maxReplyChars, 0)
+      maxReplyChars: readInt(replyRaw, 'reply.maxReplyChars', 'maxReplyChars', DEFAULT_CONFIG.reply.maxReplyChars, 0),
+      ackTone
+    },
+    journal: {
+      everyTurns: readInt(journalRaw, 'journal.everyTurns', 'everyTurns', DEFAULT_CONFIG.journal.everyTurns, 0)
     },
     social: {
       mustReplyKeywords: readList(socialRaw, 'social.mustReplyKeywords', 'mustReplyKeywords', DEFAULT_CONFIG.social.mustReplyKeywords),

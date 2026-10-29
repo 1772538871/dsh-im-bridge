@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { JOURNAL_TAIL_CHARS, JOURNAL_TAIL_COUNT, readJournalTail } from './journal.mjs';
+
 const KIND_LABEL = { image: "图片", file: "文件", record: "语音", text: "文本", other: "其他" };
 
 // 数据目录下的两份模板（由 data-layout.mjs 建好）：有内容就按固定顺序插在用户消息前面。
@@ -9,6 +11,8 @@ const PROMPT_SECTIONS = [
   { key: "persona", file: "persona.md", title: "[角色设定]" },
 ];
 const USER_SECTION_TITLE = "[用户消息]";
+// 日记单独成段：它跟着角色卡走，但内容会自己长，所以标题和角色卡分开
+export const JOURNAL_SECTION_TITLE = "[最近日记]";
 // 模板骨架里的空占位：标题「# 角色名」和只有冒号没有内容的条目「- 性格：」。
 // 刚建出来的角色卡因此等于"没写"，不会把一张空白卡塞进每轮对话。
 const PLACEHOLDER_LINE = [/^#\s*角色名$/u, /^[-*·]\s*[^：:]{1,20}[：:]\s*$/u];
@@ -125,11 +129,21 @@ export function buildPrompt({ config, message, savedAttachments = [], voiceTrans
   }
 
   const body = lines.join("\n");
-  // 两份模板都没有内容时，提示词与之前逐字一致（老用户的对话习惯不变）
-  const sections = readPromptSections({ dataDir: dataDir || dataDirOf(config), fsImpl });
-  if (sections.length === 0) return body;
+  // 两份模板都没有内容、日记也还没开始写时，提示词与之前逐字一致（老用户的对话习惯不变）
+  const dir = dataDir || dataDirOf(config);
+  const sections = readPromptSections({ dataDir: dir, fsImpl });
+  const read = fsImpl && typeof fsImpl.readFileSync === "function" ? fsImpl.readFileSync : readFileSync;
+  const journal = readJournalTail({
+    promptsDir: dir === "" ? "" : join(dir, "prompts"),
+    readText: (file) => read(file, "utf8"),
+    count: JOURNAL_TAIL_COUNT,
+    maxChars: JOURNAL_TAIL_CHARS,
+  });
+  if (sections.length === 0 && journal.length === 0) return body;
 
   const blocks = sections.map((section) => section.title + "\n" + section.body.join("\n"));
+  // 日记排在角色卡之后、"用户消息"之前：先说我是谁，再说我最近在想什么
+  if (journal.length > 0) blocks.push(JOURNAL_SECTION_TITLE + "\n" + journal.join("\n\n"));
   blocks.push(USER_SECTION_TITLE + "\n" + body);
   return blocks.join("\n\n");
 }

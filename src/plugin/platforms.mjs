@@ -81,6 +81,16 @@ const COMMON_FIELDS = [
     placeholder: '0',
     help: '超了先截断到上限，末尾添一句"太长截断了，总共 N 字"，然后再按上面的单条字数分段。'
   }),
+  field('reply.ackTone', '回执口吻：casual=像群里混的网友，plain=中性', 'select', {
+    options: ['casual', 'plain'],
+    help:
+      '只管「马上看」「别催，正弄着呢」这类回执和进度句：casual 有点小傲娇、偶尔嘴臭但不脏；' +
+      'plain 就是中性白话。超时、审批、报错这些提示两种口吻都说得清清楚楚，不会跟着变。'
+  }),
+  field('journal.everyTurns', '每隔多少轮自动写一次日记（0=只在发 /日记 时写）', 'number', {
+    placeholder: '0',
+    help: '写日记要多跑一次模型，所以默认关。打开后每 N 轮它自己回顾一次刚才聊的，只写文件，不会给你多发消息。'
+  }),
   field('social.mustReplyKeywords', '这些词出现就一定回（一行一个，群聊免 @）', 'stringList', {
     help: '群里没 @ 它，但消息里出现这些词它也会回。命中优先于"群里必须 @"，私聊不受影响。'
   }),

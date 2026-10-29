@@ -13,7 +13,11 @@ const COMMANDS = new Map([
   ['export', 'export'],
   ['导出', 'export'],
   ['help', 'help'],
-  ['帮助', 'help']
+  ['帮助', 'help'],
+  // 人格那一套：日记是它自己写的，采纳才轮到它改自己
+  ['日记', 'journal'],
+  ['写日记', 'journal'],
+  ['采纳', 'adopt']
 ]);
 
 const ROLE_TITLE = { user: '用户', assistant: 'DSH' };
@@ -65,8 +69,8 @@ export function commandHelpText({ sessionId = null } = {}) {
   const id = shortSessionId(sessionId);
   return [
     '可用命令（发在 QQ 里，不送进 DSH）：',
-    '/new 开新会话 · /status 看状态 · /export 导出历史为 markdown · /help 看这张表',
-    '中文同义词：/新会话 /状态 /导出 /帮助',
+    '/new 开新会话 · /status 看状态 · /export 导出历史 · /日记 让它写日记 · /采纳 应用人格建议 · /help 看这张表',
+    '中文同义词：/新会话 /状态 /导出 /帮助；/写日记 等同 /日记',
     id === '' ? '当前会话：还没建（发一句话就有了）' : '当前会话：' + id
   ].join('\n');
 }
@@ -102,6 +106,37 @@ export function commandStatusText({
   // 没有挂起就不出现这一行：状态里最怕"没东西也在报"
   if (waiting.length > 0) lines.push('正在等：' + waiting.join(' · '));
   return lines.join('\n');
+}
+
+/** /日记 的回执：说了几行日记、提了几条建议，下一句永远是"发 /采纳 就应用"。 */
+export function commandJournalDoneText({ diaryLines = 0, suggestionLines = 0 } = {}) {
+  const diary = Number(diaryLines) > 0 ? '日记 +' + Math.floor(diaryLines) + ' 行' : '这次没写进日记';
+  if (Number(suggestionLines) > 0) {
+    return '写好了，' + diary + '；人格建议 ' + Math.floor(suggestionLines) + ' 条，发 /采纳 就应用。';
+  }
+  return '写好了，' + diary + '；这次没有想改自己的地方。';
+}
+
+/** 功能型提示：写不成要说清原因，别为了"像人"把它含糊掉。 */
+export function commandJournalFailedText(reason) {
+  return '这次日记没写成：' + (reason === undefined || reason === null || reason === '' ? '原因不明' : String(reason));
+}
+
+export function commandAdoptDoneText({ replaced = 0, appended = 0, backupPath = '' } = {}) {
+  const oldCount = Math.floor(Number(replaced) || 0);
+  const newCount = Math.floor(Number(appended) || 0);
+  if (oldCount + newCount === 0) return '人格卡没有要改的地方，一个字都没动。';
+  // 只说真的发生过的动作：念一句"新增 0 行"就又回到报表腔了
+  const parts = [];
+  if (oldCount > 0) parts.push('替换 ' + oldCount + ' 行');
+  if (newCount > 0) parts.push('新增 ' + newCount + ' 行');
+  const lines = ['改好了：' + parts.join('，') + '。'];
+  if (typeof backupPath === 'string' && backupPath !== '') lines.push('改之前的版本备份在：' + backupPath);
+  return lines.join('\n');
+}
+
+export function commandAdoptMissingText() {
+  return '还没有可采纳的人格建议：先发 /日记，我写一篇给你看看。';
 }
 
 export function commandExportDoneText({ path = '', count = 0 } = {}) {
