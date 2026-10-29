@@ -1,6 +1,6 @@
 {
   "name": "dsh-im-bridge",
-  "version": "0.9.15",
+  "version": "0.9.16",
   "description": "把 QQ 消息（文字/图片/文档/语音）转给本机 DSH 处理并回复的桥接服务，附带 DSH 设置页",
   "type": "module",
   "main": "lib/host.js",

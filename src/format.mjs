@@ -32,8 +32,8 @@ export function formatForQq(input) {
   s = s.replace(/^[ \t]*\|(.+)\|[ \t]*$/gm, (_m, inner) => "· " + String(inner).split("|").map((c) => c.trim()).filter(Boolean).join(" ｜ "));
   s = s.replace(/^[ \t]*\|?[ \t:|-]+\|[ \t:|-]*$/gm, "");
 
-  // 行尾空白 + 连续空行压缩（QQ 里连续空行会显得很散）
+  // 行尾空白清掉，并且**把空行全部压掉**：聊天窗口里空行一眼就像机器人写的模板
   s = s.split("\n").map((line) => line.replace(/[ \t]+$/g, "")).join("\n");
-  s = s.replace(/\n{3,}/g, "\n\n").trim();
+  s = s.replace(/\n{2,}/g, "\n").trim();
   return s;
 }

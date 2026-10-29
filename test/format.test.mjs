@@ -6,7 +6,7 @@ const FENCE = "```";
 
 test('format: 标题/加粗/行内代码都变成纯文本', () => {
   const out = formatForQq('## 结论\n\n这是 **重点**，命令是 `npm test`。');
-  assert.equal(out, '▍结论\n\n这是 重点，命令是 npm test。');
+  assert.equal(out, '▍结论\n这是 重点，命令是 npm test。');
 });
 
 test('format: 列表统一成 ·，代码围栏去掉但保留内容', () => {
@@ -24,8 +24,8 @@ test('format: 表格压成要点，不留竖线', () => {
   assert.match(out, /· 端口 ｜ 3001/);
 });
 
-test('format: 连续空行压缩、行尾空白清掉', () => {
-  assert.equal(formatForQq('第一行   \n\n\n\n第二行'), '第一行\n\n第二行');
+test('format: 空行一律压掉（聊天里空行像机器人）、行尾空白清掉', () => {
+  assert.equal(formatForQq('第一行   \n\n\n\n第二行'), '第一行\n第二行');
 });
 
 test('format: 空输入返回空串，不抛', () => {
