@@ -18,6 +18,8 @@ export const QRCODE_CANDIDATES = ['napcat/cache/qrcode.png', 'cache/qrcode.png']
 export const QRCODE_MIN_BYTES = 100;
 // 端口通 + 二维码文件 60 秒没再更新 = 很可能已经扫完登录了。这是弱信号，拿不到就报 null
 export const LOGIN_QUIET_MS = 60000;
+// 二维码在这段时间内被写过 = 有活实例在出码，别再拉第二个（会撞「无法重复登录」）
+export const QR_FRESH_MS = 120000;
 export const DEFAULT_NAPCAT_PORT = 3001;
 export const CONNECT_TIMEOUT_MS = 500;
 // NapCat 的 WebUI(6099) 与 OneBot HTTP(3000)：用来判断它到底在不在跑
@@ -370,6 +372,11 @@ export function createNapcatLauncher(deps = {}) {
 
   async function start() {
     try {
+      // 端口不通但刚出过码 → 已有实例活着：不重复拉起，直接让用户扫那张码
+      const freshQr = await readQrCode(homeDirValue());
+      if (freshQr.ok && Number(clock()) - freshQr.mtimeMs < QR_FRESH_MS) {
+        return { ok: true, alreadyRunning: true, reason: 'qr-fresh', qrcodeAt: freshQr.mtimeMs };
+      }
       const home = homeDirValue();
       if (home === '') return { ok: false, error: MSG_NO_HOME };
       if (!existsPath(home)) {
@@ -453,7 +460,8 @@ export function createNapcatLauncher(deps = {}) {
       } catch { webui = null; }
       const ports = {};
       candidates.forEach((item, index) => { ports[item] = probed[index] === true; });
-      const listening = probed.some((hit) => hit === true);
+      // 只认配置端口（默认 3001）—— 本机 3000/6099 可能是别的程序，拿它们当「NapCat 在跑」会误报
+      const listening = probed[0] === true;
       if (!listening) return { ok: true, listening: false, loggedIn: null, homeDir: home, port, ports, ...known };
       const qr = await readQrCode(home);
       if (!qr.ok) {
