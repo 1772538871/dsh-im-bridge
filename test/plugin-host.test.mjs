@@ -289,7 +289,7 @@ test('字段分组: basic 只放"新手必须看懂的那几项"，其余全进 
   const BASIC = {
     'qq-napcat': ['enabled', 'storage.rootDir', 'log.dir', 'security.userWhitelist', 'qqNapcat.wsUrl', 'qqNapcat.accessToken', 'qqNapcat.homeDir'],
     'qq-official': ['enabled', 'storage.rootDir', 'log.dir', 'security.userWhitelist', 'qqOfficial.appId', 'qqOfficial.appSecret'],
-    wechat: ['enabled', 'storage.rootDir', 'log.dir', 'security.userWhitelist']
+    wechat: ['enabled', 'storage.rootDir', 'log.dir', 'security.userWhitelist', 'wechat.bridgeUrl']
   };
   for (const platform of listPlatforms()) {
     const basic = platform.fields.filter((field) => field.group === 'basic').map((field) => field.key);
@@ -668,16 +668,17 @@ test('POST /control: start/stop/restart 幂等，running 与 stats 跟着真实�
   });
 });
 
-test('POST /control: wechat 明确报"未实现"，qq-official 缺适配器报"尚未就绪"，都不抛', async () => {
+test('POST /control: wechat 缺桥适配器时报"尚未就绪"，qq-official 缺适配器也报"尚未就绪"，都不抛', async () => {
   await withDir(async (dir) => {
     const store = makeStore(dir);
     await store.save(withWhitelist(configFor(join(dir, 'data'), { platform: 'wechat' })));
-    const { modules } = fakeModules();
+    // 注入了空壳 wechatAdapter：微信这条装配路径走通但拿不到工厂，必须报"尚未就绪"而不是崩
+    const { modules } = fakeModules({ wechatAdapter: {} });
     const handler = createApiHandler({ configStore: store, runtime: createRuntime({ configStore: store, modules }) });
 
     const { json } = await request(handler, postJson('/control', { action: 'start' }));
     assert.equal(json.ok, false);
-    assert.match(json.error, /未实现/);
+    assert.match(json.error, /尚未就绪/);
     assert.deepEqual(Object.keys(json).sort(), ['error', 'ok']);
 
     const notReady = createPlatformAdapter({ platform: 'qq-official', coreConfig: coreConfigOf(store.read().config), modules: {} });
@@ -857,7 +858,8 @@ test('apply: 注册 kind:prefix 路由，卸载时停运行时并注销路由', 
   await withDir(async (dir) => {
     const file = join(dir, 'config.json');
     const store = createConfigStore({ env: { DSH_BOT_CONFIG: file } });
-    await store.save(withWhitelist(configFor(join(dir, 'data'), { platform: 'wechat' })));
+    // 用官方机器人缺凭证来制造"启动失败但被吞掉"：微信已经能启动，不再适合当失败样本
+    await store.save(withWhitelist(configFor(join(dir, 'data'), { platform: 'qq-official' })));
     const webServer = fakeWebServer();
     const ctx = fakeCtx({ webServer });
 
@@ -869,7 +871,7 @@ test('apply: 注册 kind:prefix 路由，卸载时停运行时并注销路由', 
     // 让运行时进入"启动失败但被吞掉"的状态，再确认卸载不抛
     const started = await handle.runtime.start();
     assert.equal(started.ok, false);
-    assert.match(started.error, /未实现/);
+    assert.match(started.error, /配置不完整/);
 
     await handle.dispose();
     assert.equal(webServer.routes[0].disposed, true);
@@ -899,13 +901,13 @@ test('apply: enabled=true 时异步自启，失败只记录 lastError 不抛出'
   await withDir(async (dir) => {
     const file = join(dir, 'config.json');
     const store = createConfigStore({ env: { DSH_BOT_CONFIG: file } });
-    await store.save(withWhitelist(configFor(join(dir, 'data'), { enabled: true, platform: 'wechat' })));
+    await store.save(withWhitelist(configFor(join(dir, 'data'), { enabled: true, platform: 'qq-official' })));
     const ctx = fakeCtx({ webServer: fakeWebServer() });
 
     const handle = apply(ctx, { env: { DSH_BOT_CONFIG: file } });
     await new Promise((resolve) => setTimeout(resolve, 50));
     assert.equal(handle.runtime.isRunning(), false);
-    assert.match(handle.runtime.status().lastError ?? '', /未实现/);
+    assert.match(handle.runtime.status().lastError ?? '', /配置不完整/);
     await handle.teardown();
   });
 });
@@ -978,10 +980,14 @@ test('control start: 运行时启动时补建数据目录，用户手删过的�
   });
 });
 
-test('listPlatforms: wechat 明确标注未实现，qq-official 有 appId/appSecret', () => {
+test('listPlatforms: wechat 已接本机桥（桥地址是首屏必填），qq-official 有 appId/appSecret', () => {
   const platforms = listPlatforms();
   const wechat = platforms.find((p) => p.id === 'wechat');
-  assert.match(wechat.description, /未实现/);
+  assert.match(wechat.description, /扫码登录由微信客户端完成/);
+  assert.deepEqual(
+    wechat.fields.filter((f) => f.group === 'basic' && f.key.indexOf('wechat.') === 0).map((f) => f.key),
+    ['wechat.bridgeUrl']
+  );
   const official = platforms.find((p) => p.id === 'qq-official');
   const keys = official.fields.map((f) => f.key);
   assert.ok(keys.includes('qqOfficial.appId'));

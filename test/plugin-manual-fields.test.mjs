@@ -132,7 +132,7 @@ test('visibleFields：字段表里一个 basic 都没有时整表显示（老版
 
 // ---------------- 2. 字段表口径：默认可见的只有那 10 项（含白名单） ----------------
 
-test('字段表：跨平台并集正好是约定的 10 项，其余一律 advanced', () => {
+test('字段表：跨平台并集正好是约定的 11 项（含微信桥地址），其余一律 advanced', () => {
   const expected = [
     'qqOfficial.appId',
     'qqOfficial.appSecret',
@@ -142,7 +142,9 @@ test('字段表：跨平台并集正好是约定的 10 项，其余一律 advanc
     'storage.rootDir',
     'log.dir',
     'enabled',
-    'security.userWhitelist'
+    'security.userWhitelist',
+    // 微信平台接进来之后，桥地址也是常用字段（前端要说清"填哪"）
+    'wechat.bridgeUrl'
   ];
   const basic = new Set();
   for (const platform of listPlatforms()) {
@@ -150,10 +152,10 @@ test('字段表：跨平台并集正好是约定的 10 项，其余一律 advanc
       if (field.group === 'basic') basic.add(field.key);
     }
   }
-  // 「平台」这一项由页面顶部的专用下拉渲染，不在 host 下发的字段表里，所以这里是 9 + 1 = 10
+  // 「平台」这一项由页面顶部的专用下拉渲染，不在 host 下发的字段表里，所以是 10 + 1 = 11
   assert.equal(basic.has('platform'), false);
   assert.deepEqual(Array.from(basic).sort(), expected.slice().sort());
-  assert.equal(basic.size + 1, 10);
+  assert.equal(basic.size + 1, 11);
 });
 
 test('字段表：并发/限流/分段/语音转写/审批/跑法/预设/超时/reply/social 都不在 basic', () => {

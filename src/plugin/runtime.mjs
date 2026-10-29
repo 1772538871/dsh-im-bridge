@@ -19,10 +19,11 @@ const CORE_MODULES = {
   onebotParse: '../onebot/parse.mjs',
   onebotSend: '../onebot/send.mjs',
   onebotClient: '../onebot/client.mjs',
-  qqbotAdapter: '../qqbot/adapter.mjs'
+  qqbotAdapter: '../qqbot/adapter.mjs',
+  wechatAdapter: '../wechat/adapter.mjs'
 };
 
-const PLATFORM_MODULE = { 'qq-napcat': 'onebotClient', 'qq-official': 'qqbotAdapter' };
+const PLATFORM_MODULE = { 'qq-napcat': 'onebotClient', 'qq-official': 'qqbotAdapter', wechat: 'wechatAdapter' };
 const BASE_MODULES = ['log', 'storage', 'security', 'queue', 'sessions', 'pipeline', 'dsh', 'sdkRunner'];
 
 function errorText(error) {
@@ -101,6 +102,9 @@ export function resolveTestTarget(config, explicit = '') {
     pick = candidates.filter((item) => OPENID_LIKE.test(item))[0];
   } else if (config?.platform === 'qq-napcat') {
     pick = candidates.filter((item) => /^\d+$/.test(item))[0];
+  } else if (config?.platform === 'wechat') {
+    // 微信的收件人是 wxid（不是 QQ 号）：白名单里挑一个"看着不像 QQ 号"的，别把测试消息发错人
+    pick = candidates.filter((item) => !/^\d+$/.test(item))[0];
   }
   if (pick) return { ok: true, target: pick, source: 'whitelist' };
   return {
@@ -220,8 +224,6 @@ export function createRuntime({ configStore, logger = null, modules = null, now 
     if (userWhitelist.length === 0 && groupWhitelist.length === 0) {
       return fail('白名单为空：请先填写用户白名单（你自己的 QQ 号）或群白名单，否则任何人都能驱动本机 DSH');
     }
-    if (config.platform === 'wechat') return fail('平台 wechat 未实现');
-
     const adapterModule = PLATFORM_MODULE[config.platform];
     if (adapterModule === undefined) return fail('未知平台：' + String(config.platform));
 

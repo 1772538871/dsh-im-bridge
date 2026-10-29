@@ -95,7 +95,7 @@ export function apply(ctx) { /* 注册路由 + 按配置启动/停止运行时 *
 ```
 - `apply` 全程 try/catch；注册失败只写日志（`ctx.logger?.warn` 或 console），**绝不让 DSH 启动失败**。
 - `ctx.effect(() => () => { /* 停运行时、注销路由 */ })` 保证卸载干净。
-- 运行时 = 现有内核（`src/pipeline.mjs` + 适配器）。按 `platform` 选适配器：`qq-napcat` → `src/onebot/*`；`qq-official` → `src/qqbot/*`（尚未完成则启动时返回 `{ok:false,error:'平台适配器尚未就绪'}`）；`wechat` → 明确报"未实现"。
+- 运行时 = 现有内核（`src/pipeline.mjs` + 适配器）。按 `platform` 选适配器：`qq-napcat` → `src/onebot/*`；`qq-official` → `src/qqbot/*`（尚未完成则启动时返回 `{ok:false,error:'平台适配器尚未就绪'}`）；`wechat` → `src/wechat/*`（轮询本机 WeChatFerry 桥，缺模块则报 `{ok:false,error:'平台适配器尚未就绪'}`）。
 - 同一时刻只允许一个运行时实例；`start`/`stop`/`restart` 幂等。
 - 日志：写到 `<storage.rootDir>/logs/bridge-YYYY-MM-DD.log`（复用 `src/log.mjs`）。
 

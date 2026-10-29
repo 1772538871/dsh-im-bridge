@@ -2,6 +2,19 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，语义化版本。
 
+## [0.9.25] - 2026-10-29
+
+### 新增（第三个平台：微信个人号，只做私聊文本）
+- 微信卡片在设置页可用：字段 `wechat.bridgeUrl`（默认 `http://127.0.0.1:19100`）与 `wechat.pollMs`（默认 1000）；
+  接入卡片写明「扫码登录由微信客户端完成」，带「检测连接」按钮（走宿主 `GET /wechat/status`，页面不直连桥）。
+- `tools/wcf-bridge/bridge.py`：把 WeChatFerry（`wcferry`）包成本机 HTTP（`GET /status`、`POST /send`、`GET /events?since=`），
+  只监听 127.0.0.1，微信没登录也不退出。
+- `src/wechat/{client,adapter}.mjs`：轮询桥取消息、映射成内部 message（对齐 onebot 产物）、过滤自己的消息，失败一律降级成 `{ok:false,error}`。
+
+### 说明
+- 微信没有官方机器人接口，这条链路是改客户端（WeChatFerry + 微信 3.9.6.x），**违反微信用户协议、有封号风险**，只建议小号使用。
+- 白名单填的是 **wxid**（微信身份），不是 QQ 号。
+
 ## [0.9.24] - 2026-10-29
 
 ### 变更

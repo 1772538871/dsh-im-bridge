@@ -72,7 +72,7 @@ src/sdk-runner.mjs   sdk 长驻执行器
 src/inprocess-runner.mjs  进程内执行器（配合审批桥/提问桥）
 src/question-bridge.mjs  提问桥（user-questions/request → QQ 选择题）
 src/approval-bridge.mjs  审批桥（approval/request → QQ 审批卡）
-src/onebot|qqbot/    两个平台适配器
+src/onebot|qqbot|wechat/   三个平台适配器
 src/pipeline.mjs     平台无关管线
 bin/                 命令行入口
 docs/                install / config / troubleshooting / manual.zh / NAPCAT / SECURITY

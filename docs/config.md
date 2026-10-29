@@ -13,7 +13,7 @@
 
 | 键 | 一句人话 | 默认 |
 | --- | --- | --- |
-| `platform` | 用哪种方式连 QQ：`qq-official`=官方机器人（不用挂客户端）/ `qq-napcat`=接自己电脑上的 NapCat / `wechat` 未实现 | `qq-napcat` |
+| `platform` | 用哪种方式接入：`qq-official`=官方机器人（不用挂客户端）/ `qq-napcat`=接自己电脑上的 NapCat / `wechat`=微信个人号（本机 WeChatFerry 桥，只做私聊） | `qq-napcat` |
 | `enabled` | 开机自动启动：勾上以后 DSH 一起来，机器人也跟着起来 | `false` |
 | `storage.rootDir` | **数据目录**：附件/历史/日志/提示词都在这下面，子文件夹（`logs` / `media` / `history` / `prompts` / `state`）保存配置时自动建好。必须绝对路径，别选 C 盘 | `E:\dsh-im-bridge-data` |
 | `log.dir` | **日志目录**：留空 = `<storage.rootDir>/logs`（不会被写回配置文件）；只有想把日志单独放一处时才填 | `""` |
@@ -22,6 +22,11 @@
 | `qqNapcat.wsUrl` | NapCat 的地址（NapCat 里开一个 WebSocket 服务端，端口对上就行） | `ws://127.0.0.1:3001` |
 | `qqNapcat.accessToken` | NapCat 的口令；NapCat 里没设就留空 | `""` |
 | `qqNapcat.homeDir` | NapCat 装在哪个目录（填了才能在向导里一键启动） | `""` |
+| `wechat.bridgeUrl` | 微信桥地址：`tools/wcf-bridge/bridge.py` 监听的那个本机端口 | `http://127.0.0.1:19100` |
+| `wechat.pollMs` | 多久问一次桥有没有新消息（毫秒，最小 200） | `1000` |
+
+> 微信个人号要先把桥跑起来：`python tools/wcf-bridge/bridge.py`（端口取环境变量 `WCF_BRIDGE_PORT`，默认 19100，只监听 127.0.0.1）。
+> **扫码登录由微信客户端完成**，桥只负责收发；设置页的「检测连接」会问一次桥的 `/status`，显示「已连接：昵称」或一句人话错误。
 
 > ⚠️ **白名单（`security.userWhitelist`）在「显示全部字段」后面**：第一次接入时把那个开关勾上，把你自己填进去，
 > 否则启动会被明确拒绝（空名单 = 谁都能使唤你电脑，所以这里不给你默认放行）。

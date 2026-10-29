@@ -64,6 +64,8 @@ export const DEFAULT_CONFIG = {
   // homeDir 留空 = 没装/不用一键启动：填了它，设置页点一下就能把 NapCat 拉起来并读到登录二维码
   qqNapcat: { wsUrl: 'ws://127.0.0.1:3001', accessToken: '', homeDir: '', port: 3001, reconnectMinMs: 1000, reconnectMaxMs: 30000 },
   qqOfficial: { appId: '', appSecret: '', sandbox: true },
+  // 微信个人号走本机桥（tools/wcf-bridge/bridge.py）：Node 只发 HTTP，扫码登录仍在微信客户端里
+  wechat: { bridgeUrl: 'http://127.0.0.1:19100', pollMs: 1000 },
   dsh: {
     nodePath: '',
     binPath: '',
@@ -329,6 +331,7 @@ export function normalizeConfig(raw, options = {}) {
   const logRaw = section('log');
   const napcatRaw = section('qqNapcat');
   const officialRaw = section('qqOfficial');
+  const wechatRaw = section('wechat');
   const dshRaw = section('dsh');
 
   const platform = readText(src, 'platform', 'platform', DEFAULT_CONFIG.platform, true);
@@ -358,6 +361,12 @@ export function normalizeConfig(raw, options = {}) {
   if (rawPort > 65535) {
     problems.push('qqNapcat.port 必须在 1~65535 之间，当前为 ' + rawPort);
     napcatPort = DEFAULT_CONFIG.qqNapcat.port;
+  }
+
+  // 桥地址只可能是本机某个 http 端口：写成 ws:// 或裸 "127.0.0.1:19100" 都连不上，提前说清楚
+  const bridgeUrl = readText(wechatRaw, 'wechat.bridgeUrl', 'bridgeUrl', DEFAULT_CONFIG.wechat.bridgeUrl, true);
+  if (!/^https?:\/\//i.test(bridgeUrl)) {
+    problems.push('wechat.bridgeUrl 必须以 http:// 或 https:// 开头，当前为 ' + JSON.stringify(bridgeUrl));
   }
 
   const profile = readText(dshRaw, 'dsh.profile', 'profile', DEFAULT_CONFIG.dsh.profile, true);
@@ -464,6 +473,11 @@ export function normalizeConfig(raw, options = {}) {
       appId: readText(officialRaw, 'qqOfficial.appId', 'appId', DEFAULT_CONFIG.qqOfficial.appId, true),
       appSecret: readText(officialRaw, 'qqOfficial.appSecret', 'appSecret', DEFAULT_CONFIG.qqOfficial.appSecret, true),
       sandbox: readBool(officialRaw, 'qqOfficial.sandbox', 'sandbox', DEFAULT_CONFIG.qqOfficial.sandbox)
+    },
+    wechat: {
+      bridgeUrl,
+      // 轮询间隔低于 200ms 只是把本机 CPU 拖慢：钳到下限而不是报错，配置不该为这种事挡住启动
+      pollMs: readInt(wechatRaw, 'wechat.pollMs', 'pollMs', DEFAULT_CONFIG.wechat.pollMs, 200)
     },
     dsh: { releaseOnIdle: false,
       nodePath: readPath(dshRaw, 'dsh.nodePath', 'nodePath', DEFAULT_CONFIG.dsh.nodePath),

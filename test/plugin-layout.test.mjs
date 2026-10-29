@@ -112,11 +112,11 @@ test('platformCards: 每个平台一张卡片，选中项带高亮标记与图�
   assert.equal(cards[1].icon, 'robot');
 });
 
-test('platformCards: 未开放的 wechat 是禁用态并标注「即将支持」', () => {
+test('platformCards: 微信已经接上本机桥，卡片可选、不再标「即将支持」', () => {
   const { platformCards } = loadClient();
   const wechat = platformCards(PLATFORMS, 'qq-official').filter((c) => c.id === 'wechat')[0];
-  assert.equal(wechat.disabled, true);
-  assert.equal(wechat.badge, '即将支持');
+  assert.equal(wechat.disabled, false);
+  assert.equal(wechat.badge, '');
   const napcat = platformCards(PLATFORMS, 'qq-official').filter((c) => c.id === 'qq-napcat')[0];
   assert.equal(napcat.disabled, false);
   assert.equal(napcat.badge, '');
@@ -184,7 +184,8 @@ test('stepsOf: 个人号三步是先装并启动、再扫码登录小号、最�
 test('stepsOf: 没选平台/未知平台时没有步骤可显示', () => {
   const { stepsOf } = loadClient();
   assert.equal(stepsOf('').length, 0);
-  assert.equal(stepsOf('wechat').length, 0);
+  // weixin 只是旧别名，不单独开放，给不出步骤
+  assert.equal(stepsOf('weixin').length, 0);
 });
 
 test('connectCopy: 官方机器人给出等待状态、主标题、说明和开放平台链接', () => {
@@ -318,11 +319,11 @@ test('渲染: 上面平台卡片、下面接入卡片，顶部只留状态药丸
   assert.ok(text.includes('1 / 1 在线'), text);
   assert.ok(text.includes('更多设置'), '常用字段收进「更多设置」：' + text);
   assert.ok(text.includes('QQ 官方机器人'), '平台卡片用 /platforms 的名称：' + text);
-  assert.ok(text.includes('即将支持'), 'wechat 卡片要标注即将支持：' + text);
+  assert.equal(text.includes('即将支持'), false, '三个平台都能用了，不该再有「即将支持」：' + text);
   const pressed = findAll(element, (n) => n.props && Object.prototype.hasOwnProperty.call(n.props, 'aria-pressed'));
   assert.equal(pressed.length, 3, '只有三张平台卡片是可选中控件（Tab 已经删掉）：' + pressed.length);
   const disabled = findAll(element, (n) => n.type === 'button' && n.props.disabled === true);
-  assert.ok(disabled.some((n) => textOf(n).includes('微信')), 'wechat 卡片必须是禁用按钮');
+  assert.equal(disabled.some((n) => textOf(n).includes('微信')), false, '微信卡片必须能点');
 });
 
 test('渲染: 向导卡有状态小字、二维码占位与三步编号', () => {

@@ -6,6 +6,7 @@ import { createNapcatLauncher } from './napcat-launcher.mjs';
 import { encodeQr, qrToSvg } from '../../lib/qr.js';
 import { createTokenProvider } from '../qqbot/auth.mjs';
 import { createQqBotClient } from '../qqbot/client.mjs';
+import { createWechatClient } from '../wechat/client.mjs';
 
 export const API_PREFIX = '/dsh-bot/api';
 export const MAX_BODY_BYTES = 64 * 1024;
@@ -42,7 +43,7 @@ export function platformLabelOf(id) {
   return (hit && textOf(hit.label)) || wanted || '未知平台';
 }
 
-// 「测试消息只能从正在运行的平台发」：两个平台名都按实际替换，其余一个字的语气都不改
+// 「测试消息只能从正在运行的平台发」：两头的平台名都按实际替换，其余一个字的语气都不改
 export function testPlatformConflictText(runningId, requestedId) {
   return (
     '测试消息只能从正在运行的平台发。你现在跑的是「' +
@@ -398,6 +399,34 @@ export function createApiHandler({ configStore, runtime, logger = null, now = ()
     return sendJson(res, result);
   }
 
+  // 「检测连接」：宿主替页面去问微信桥一句 /status。页面不能直连 127.0.0.1:19100
+  // （跨源 + 端口可能改过），所以桥地址以配置为准，错误一律翻译成人话。
+  async function getWechatStatus(res) {
+    const saved = configStore.read().config ?? {};
+    const bridgeUrl = textOf(saved.wechat && saved.wechat.bridgeUrl);
+    const client = createWechatClient({ baseUrl: bridgeUrl, fetchImpl: typeof fetchImpl === 'function' ? fetchImpl : undefined });
+    let result;
+    try {
+      result = await client.status();
+    } catch (error) {
+      warn('微信桥 /status 异常', { error: errorText(error) });
+      return sendJson(res, { ok: false, error: '检测微信桥失败：' + errorText(error) });
+    }
+    if (!result || result.ok !== true) {
+      return sendJson(res, { ok: false, error: textOf(result && result.error) || '连不上微信桥' });
+    }
+    // 桥活着但微信没登录：loggedIn:false + error 就是设置页要显示的那句人话
+    return sendJson(res, {
+      ok: true,
+      bridgeUrl: client.base,
+      loggedIn: result.loggedIn === true,
+      selfWxid: result.selfWxid,
+      nickname: result.nickname,
+      received: result.received,
+      ...(result.error === '' ? {} : { error: result.error })
+    });
+  }
+
   // 一键启动/二维码这四条：结果全部是"宿主自己的人话"，连异常也翻译成 ok:false，
   // 于是前端永远只按 ok 分支，HTTP 层始终 200（契约 §3）。
   async function napcatCall(method, res) {
@@ -477,6 +506,10 @@ export function createApiHandler({ configStore, runtime, logger = null, now = ()
     if (suffix === '/logs/tail') {
       if (method !== 'GET') return sendJson(res, { ok: false, error: '只接受 GET /logs/tail' });
       return getLogsTail(url, res);
+    }
+    if (suffix === '/wechat/status') {
+      if (method !== 'GET') return sendJson(res, { ok: false, error: '只接受 GET /wechat/status' });
+      return getWechatStatus(res);
     }
     if (suffix === '/napcat/start') {
       if (method !== 'POST') return sendJson(res, { ok: false, error: '只接受 POST /napcat/start' });

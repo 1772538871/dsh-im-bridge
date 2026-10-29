@@ -193,7 +193,18 @@ const PLATFORM_FIELDS = {
       help: '官方还没给沙箱域名，勾不勾都连正式环境。'
     })
   ],
-  wechat: []
+  wechat: [
+    field('wechat.bridgeUrl', '微信桥地址（WeChatFerry 本机桥，默认 19100）', 'text', {
+      group: 'basic',
+      required: true,
+      placeholder: 'http://127.0.0.1:19100',
+      help: '扫码登录由微信客户端完成：桥只负责收发，登录还是在微信里点。换端口时改这里和环境变量 WCF_BRIDGE_PORT。'
+    }),
+    field('wechat.pollMs', '多久问一次桥（毫秒，默认 1000）', 'number', {
+      placeholder: '1000',
+      help: '越小越快看到消息，也越费 CPU；小于 200 会拒绝保存（按默认 1000 跑）。'
+    })
+  ]
 };
 
 const PLATFORMS = [
@@ -211,8 +222,8 @@ const PLATFORMS = [
   },
   {
     id: 'wechat',
-    label: '微信（未实现）',
-    description: '尚未实现：选择它保存配置可以，但启动会明确返回"未实现"。',
+    label: '微信个人号',
+    description: 'PC 微信 + WeChatFerry 本机桥：扫码登录由微信客户端完成，只接私聊。',
     fields: PLATFORM_FIELDS.wechat.concat(COMMON_FIELDS)
   }
 ];
@@ -240,7 +251,41 @@ export function createPlatformAdapter({ platform, coreConfig, logger = null, mod
   }
 
   if (platform === 'wechat') {
-    return { ok: false, error: '平台 wechat 未实现' };
+    const createWechatAdapter = modules?.wechatAdapter?.createWechatAdapter;
+    if (typeof createWechatAdapter !== 'function') {
+      return { ok: false, error: '平台适配器尚未就绪' };
+    }
+    const wechat = coreConfig?.wechat ?? {};
+    try {
+      // 桥地址与轮询间隔都在这里注入：适配器自己不去读配置，测试也就不用碰磁盘
+      const adapter = createWechatAdapter({ baseUrl: wechat.bridgeUrl, pollMs: wechat.pollMs, logger });
+      return {
+        ok: true,
+        adapter: {
+          platform,
+          client: adapter.client,
+          deps: adapter.deps,
+          start(onEvent) {
+            return adapter.start(onEvent);
+          },
+          stop() {
+            return adapter.stop();
+          },
+          status() {
+            try {
+              return adapter.status();
+            } catch {
+              return null;
+            }
+          },
+          send(args) {
+            return adapter.send(args);
+          }
+        }
+      };
+    } catch (error) {
+      return { ok: false, error: '创建微信适配器失败：' + String(error?.message ?? error) };
+    }
   }
 
   if (platform === 'qq-napcat') {

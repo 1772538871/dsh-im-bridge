@@ -385,13 +385,19 @@ test('resolveWizardStep: 平台切到个人号时第一步给下载页并提示�
 
 test('resolveWizardStep: 还没选平台时不给链接，免得把人带错地方', () => {
   const { exports } = loadClient();
-  for (const platform of ['', 'wechat']) {
+  for (const platform of ['']) {
     const steps = exports.resolveWizardStep({ platform });
     assert.equal(steps[0].url, '', '平台没定就不该出现「打开开放平台/6099」');
     assert.equal(steps[0].title, '先选平台');
     assert.ok(steps[0].text.includes('先在上面选'), steps[0].text);
     assert.equal(steps[1].status, 'todo');
   }
+  // 微信没有外部链接：第一步只说"在微信客户端里扫码登录 + 起本机桥"
+  const wx = exports.resolveWizardStep({ platform: 'wechat' });
+  assert.equal(wx[0].url, '');
+  assert.equal(wx[0].title, '让微信客户端登录小号');
+  assert.ok(wx[0].text.includes('扫码登录由微信客户端完成'), wx[0].text);
+  assert.equal(wx[1].status, 'ok', '微信没有 AppID/AppSecret，第 2 步不该挡路');
 });
 
 test('resolveWizardStep: 进行中 / 通过 / 失败三种状态都落到对应一步', () => {
