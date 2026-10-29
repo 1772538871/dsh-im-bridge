@@ -406,6 +406,106 @@ test('POST /test-send: 白名单里没有能用的号时 ok:false，并说清该
   });
 });
 
+test('POST /test-send: 平台不一致时不发，并把「你现在跑的是哪个」说清楚', async () => {
+  await withDir(async (dir) => {
+    const store = makeStore(dir);
+    await store.save(
+      withWhitelist(
+        configFor(join(dir, 'data'), { platform: 'qq-official', qqOfficial: { appId: 'app-1', appSecret: 'sec-1', sandbox: true } })
+      )
+    );
+    const sent = [];
+    const { modules } = fakeModules({
+      qqbotAdapter: {
+        // 官方适配器整套注入：start 是空转，sendReply 只为证明「一条都没发出去」
+        createQqBotAdapter: () => ({
+          start() {},
+          stop() {},
+          client: {},
+          deps: {
+            sendReply: async (args) => {
+              sent.push(args);
+              return { sent: 1, failed: 0 };
+            }
+          }
+        }),
+        qqBotProblems: () => []
+      }
+    });
+    const runtime = createRuntime({ configStore: store, modules });
+    const handler = createApiHandler({ configStore: store, runtime });
+    const started = await request(handler, postJson('/control', { action: 'start' }));
+    assert.equal(started.json.ok, true, JSON.stringify(started.json));
+
+    // 用户在设置页点了「QQ 个人账号」那张卡片，但那只是前端状态：配置里还是官方机器人
+    const { json } = await request(handler, postJson('/test-send', { platform: 'qq-napcat' }));
+    assert.equal(json.ok, false);
+    assert.equal(
+      json.error,
+      '测试消息只能从正在运行的平台发。你现在跑的是「QQ 官方机器人」，想用小号发就先在左边选「QQ 个人账号」、保存并启动，再点这里。'
+    );
+    assert.equal(sent.length, 0, '平台对不上时一条都不能发');
+    await request(handler, postJson('/control', { action: 'stop' }));
+  });
+});
+
+test('POST /test-send: 平台一致时照发，响应里带回 platform', async () => {
+  await withDir(async (dir) => {
+    const store = makeStore(dir);
+    await store.save(withWhitelist(configFor(join(dir, 'data'))));
+    const sent = [];
+    const { modules } = fakeModules({ onebotSend: { sendReply: async (args) => { sent.push(args); return { sent: 1, failed: 0 }; } } });
+    const runtime = createRuntime({ configStore: store, modules });
+    const handler = createApiHandler({ configStore: store, runtime });
+    await request(handler, postJson('/control', { action: 'start' }));
+
+    const explicit = await request(handler, postJson('/test-send', { platform: 'qq-napcat' }));
+    assert.equal(explicit.json.ok, true, JSON.stringify(explicit.json));
+    assert.equal(explicit.json.platform, 'qq-napcat');
+    assert.equal(sent.length, 1);
+
+    // 不传就以配置里的 platform 为准：老客户端不改也能继续用
+    const byDefault = await request(handler, postJson('/test-send', {}));
+    assert.equal(byDefault.json.ok, true, JSON.stringify(byDefault.json));
+    assert.equal(byDefault.json.platform, 'qq-napcat');
+    assert.equal(sent.length, 2);
+    await request(handler, postJson('/control', { action: 'stop' }));
+  });
+});
+
+test('POST /test-send: platform 不是字符串时直接说不收', async () => {
+  await withDir(async (dir) => {
+    const store = makeStore(dir);
+    await store.save(withWhitelist(configFor(join(dir, 'data'))));
+    const handler = createApiHandler({ configStore: store, runtime: createRuntime({ configStore: store }) });
+    const { json } = await request(handler, postJson('/test-send', { platform: 1 }));
+    assert.equal(json.ok, false);
+    assert.match(json.error, /platform 必须是字符串/);
+  });
+});
+
+test('runtime: runningPlatform() 跟适配器走，配置改了没重启也不改口', async () => {
+  await withDir(async (dir) => {
+    const store = makeStore(dir);
+    await store.save(withWhitelist(configFor(join(dir, 'data'))));
+    const { modules } = fakeModules({ onebotSend: { sendReply: async () => ({ sent: 1, failed: 0 }) } });
+    const runtime = createRuntime({ configStore: store, modules });
+    assert.equal(runtime.runningPlatform(), '', '没启动就没有平台');
+    await runtime.start();
+    assert.equal(runtime.runningPlatform(), 'qq-napcat');
+    // 用户在界面上把平台改成官方机器人、但还没点重启：跑着的适配器仍然是个人号
+    await store.save(
+      withWhitelist(
+        configFor(join(dir, 'data'), { platform: 'qq-official', qqOfficial: { appId: 'app-1', appSecret: 'sec-1', sandbox: true } })
+      )
+    );
+    assert.equal(runtime.status().platform, 'qq-official', 'status 报的是配置里的平台');
+    assert.equal(runtime.runningPlatform(), 'qq-napcat', '正在跑的仍是个人号适配器');
+    await runtime.stop();
+    assert.equal(runtime.runningPlatform(), '');
+  });
+});
+
 // ---------------------------------------------------------------- POST /config
 
 test('POST /config: 合法配置落盘，响应里密钥掩码', async () => {

@@ -795,7 +795,9 @@ test('交互：点「发送测试消息」→ POST /test-send，成功显示发�
   await tick();
   element = render();
   assert.ok(textOf(element).includes('已发送给 10001'), textOf(element));
-  assert.deepEqual(lastTest, {}, '没填「测试消息发给谁」就不传 target，让宿主按平台自己挑');
+  // 没填「测试消息发给谁」就不传 target（宿主按平台自己挑）；platform 必须带上，
+  // 否则用户在官方机器人卡片上点测试，话会发给正在跑的那个号而不是他想测的那个。
+  assert.deepEqual(lastTest, { platform: 'qq-napcat' });
 });
 
 test('交互：测试消息发不出去时显示人话原因，不说"已发送"', async () => {
@@ -814,5 +816,112 @@ test('交互：测试消息发不出去时显示人话原因，不说"已发送"
   assert.ok(text.includes('没发出去'), text);
   assert.ok(text.includes('先点「启动」'), text);
   assert.ok(!text.includes('已发送'), text);
+});
+
+// 个人号「扫码成功 -> 一键切过去」的那套：登录态来自 /napcat/status，
+// 平台切换要真的落盘 + 真的重启，失败只许把服务端原话摆出来。
+const OFFICIAL_CONFIG = {
+  ...CONFIG,
+  platform: 'qq-official',
+  qqOfficial: { appId: '102911163', appSecret: '***', sandbox: true }
+};
+
+// 打开个人号卡片，并把「已扫码登录」读进来（「刷新二维码」就是立刻问一次 NapCat 状态）
+async function openNapcatCard(fake, render) {
+  let element = await settle(fake, render);
+  findAll(element, (n) => n.type === 'button' && textOf(n).includes('NapCat / OneBot'))[0].props.onClick();
+  element = render();
+  findAll(element, (n) => n.type === 'button' && textOf(n) === '刷新二维码')[0].props.onClick();
+  await tick();
+  return render();
+}
+
+test('交互：平台不一致时把服务端那句话原样显示，不自己改写', async () => {
+  const conflict =
+    '测试消息只能从正在运行的平台发。你现在跑的是「QQ 官方机器人」，想用小号发就先在左边选「QQ 个人账号」、保存并启动，再点这里。';
+  let lastTest = null;
+  const fetchImpl = async (url, init) => {
+    if (url === '/dsh-bot/api/platforms') return jsonResponse({ ok: true, platforms: PLATFORMS });
+    if (url === '/dsh-bot/api/config') return jsonResponse({ ok: true, config: CONFIG, warnings: [], configPath: 'p' });
+    if (url === '/dsh-bot/api/test-send') {
+      lastTest = JSON.parse((init && init.body) || '{}');
+      return jsonResponse({ ok: false, error: conflict });
+    }
+    return jsonResponse({ ok: true, running: true, enabled: true, platform: 'qq-official', stats: {} });
+  };
+  const { render, fake } = mountSection(fetchImpl);
+  let element = await settle(fake, render);
+  findAll(element, (n) => n.type === 'button' && textOf(n) === '发送测试消息')[0].props.onClick();
+  await tick();
+  element = render();
+  const text = textOf(element);
+  assert.equal(lastTest.platform, 'qq-napcat', '请求必须带上用户点的那张卡片的平台');
+  assert.ok(text.includes(conflict), text);
+  assert.ok(!text.includes('已发送'), text);
+});
+
+test('交互：点「用这个小号」-> 存 platform=qq-napcat 再重启，回执「已切到小号，正在重启…」', async () => {
+  const calls = [];
+  let savedConfig = OFFICIAL_CONFIG;
+  const fetchImpl = async (url, init) => {
+    const method = init && init.method ? init.method : 'GET';
+    if (url === '/dsh-bot/api/platforms') return jsonResponse({ ok: true, platforms: PLATFORMS });
+    if (url === '/dsh-bot/api/config' && method === 'GET') {
+      return jsonResponse({ ok: true, config: savedConfig, warnings: [], configPath: 'E:\\cfg\\config.json' });
+    }
+    if (url === '/dsh-bot/api/config' && method === 'POST') {
+      const body = JSON.parse(init.body);
+      calls.push({ kind: 'save', config: body.config });
+      savedConfig = body.config;
+      return jsonResponse({ ok: true, config: body.config, warnings: [], configPath: 'E:\\cfg\\config.json' });
+    }
+    if (url === '/dsh-bot/api/control') {
+      calls.push({ kind: 'control', action: JSON.parse(init.body).action });
+      return jsonResponse({ ok: true, status: { running: true, enabled: true, platform: 'qq-napcat', stats: {} } });
+    }
+    if (url === '/dsh-bot/api/napcat/status') return jsonResponse({ ok: true, listening: true, loggedIn: true });
+    if (url === '/dsh-bot/api/napcat/qr') return jsonResponse({ ok: false, error: '还没生成二维码' });
+    return jsonResponse({ ok: true, running: true, enabled: true, platform: 'qq-official', stats: {} });
+  };
+  const { render, fake } = mountSection(fetchImpl);
+  let element = await openNapcatCard(fake, render);
+  const button = findAll(element, (n) => n.type === 'button' && textOf(n) === '用这个小号')[0];
+  assert.ok(button, textOf(element));
+  button.props.onClick();
+  await tick();
+  element = render();
+  const text = textOf(element);
+  assert.deepEqual(Array.from(calls, (c) => c.kind), ['save', 'control'], '先落盘再重启');
+  assert.equal(calls[0].config.platform, 'qq-napcat');
+  assert.equal(calls[0].config.qqNapcat.wsUrl, 'ws://127.0.0.1:3001', 'wsUrl 用现值');
+  assert.equal(calls[0].config.qqNapcat.accessToken, '***', 'accessToken 用现值（宿主按掩码合并）');
+  assert.equal(calls[1].action, 'restart');
+  assert.ok(text.includes('已切到小号，正在重启…'), text);
+  assert.ok(text.includes('平台 QQ 个人账号'), '摘要要跟着刷新：' + text);
+  assert.equal(findAll(element, (n) => n.type === 'button' && textOf(n) === '用这个小号').length, 0, '切过去之后按钮就该消失');
+});
+
+test('交互：切小号时重启失败 -> 页面只显示服务端那句话', async () => {
+  const serverError = '重启失败：端口 3001 已被占用';
+  const fetchImpl = async (url, init) => {
+    const method = init && init.method ? init.method : 'GET';
+    if (url === '/dsh-bot/api/platforms') return jsonResponse({ ok: true, platforms: PLATFORMS });
+    if (url === '/dsh-bot/api/config' && method === 'GET') {
+      return jsonResponse({ ok: true, config: OFFICIAL_CONFIG, warnings: [], configPath: 'p' });
+    }
+    if (url === '/dsh-bot/api/config') return jsonResponse({ ok: true, config: OFFICIAL_CONFIG, warnings: [], configPath: 'p' });
+    if (url === '/dsh-bot/api/control') return jsonResponse({ ok: false, error: serverError });
+    if (url === '/dsh-bot/api/napcat/status') return jsonResponse({ ok: true, listening: true, loggedIn: true });
+    if (url === '/dsh-bot/api/napcat/qr') return jsonResponse({ ok: false, error: '还没生成二维码' });
+    return jsonResponse({ ok: true, running: true, enabled: true, platform: 'qq-official', stats: {} });
+  };
+  const { render, fake } = mountSection(fetchImpl);
+  let element = await openNapcatCard(fake, render);
+  findAll(element, (n) => n.type === 'button' && textOf(n) === '用这个小号')[0].props.onClick();
+  await tick();
+  element = render();
+  const text = textOf(element);
+  assert.ok(text.includes(serverError), text);
+  assert.ok(!text.includes('已切到小号'), '失败不许说切好了：' + text);
 });
 

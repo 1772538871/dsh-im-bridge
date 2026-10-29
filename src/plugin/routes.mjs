@@ -35,6 +35,24 @@ export function buildWizardQr(targets) {
   return out;
 }
 
+// 错误文案里要念出人话平台名：用户点的是「QQ 个人账号」，不该看到 qq-napcat
+export function platformLabelOf(id) {
+  const wanted = textOf(id);
+  const hit = listPlatforms().filter((item) => item.id === wanted)[0];
+  return (hit && textOf(hit.label)) || wanted || '未知平台';
+}
+
+// 「测试消息只能从正在运行的平台发」：两个平台名都按实际替换，其余一个字的语气都不改
+export function testPlatformConflictText(runningId, requestedId) {
+  return (
+    '测试消息只能从正在运行的平台发。你现在跑的是「' +
+    platformLabelOf(runningId) +
+    '」，想用小号发就先在左边选「' +
+    platformLabelOf(requestedId) +
+    '」、保存并启动，再点这里。'
+  );
+}
+
 let wizardQrCache = null;
 
 export function wizardQrPayload() {
@@ -240,6 +258,20 @@ export function createApiHandler({ configStore, runtime, logger = null, now = ()
     return napcatLauncher;
   }
 
+  // 「正在跑的是哪个平台」只有一个来源：适配器是按哪个平台建的。
+  // 拿不到（老宿主或测试里的假件没有这个方法）才退回 status().platform。
+  function runningPlatformOf() {
+    if (typeof runtime.runningPlatform === 'function') {
+      try {
+        return textOf(runtime.runningPlatform());
+      } catch {
+        return '';
+      }
+    }
+    const view = typeof runtime.status === 'function' ? runtime.status() : null;
+    return textOf(view && view.platform);
+  }
+
   const warn = (message, extra) => {
     try {
       if (logger && typeof logger.warn === 'function') logger.warn(message, extra);
@@ -312,12 +344,23 @@ export function createApiHandler({ configStore, runtime, logger = null, now = ()
     if (target !== undefined && target !== null && typeof target !== 'string') {
       return sendJson(res, { ok: false, error: 'target 必须是字符串（要发给谁），或干脆不传' });
     }
+    if (value.platform !== undefined && value.platform !== null && typeof value.platform !== 'string') {
+      return sendJson(res, { ok: false, error: 'platform 必须是字符串（平台 id），或干脆不传' });
+    }
     if (typeof runtime.sendTest !== 'function') {
       return sendJson(res, { ok: false, error: '当前宿主版本不支持发送测试消息' });
     }
+    // 只肯从正在跑的那个平台发：用户点了哪张卡片就传哪个 platform，对不上就明说，
+    // 不拿另一个号替他发一条——那正是「测试消息发到官方机器人上」的旧毛病。
+    const requested = textOf(value.platform) || textOf(configStore.read().config?.platform);
+    const running = runningPlatformOf();
+    if (running !== '' && requested !== '' && requested !== running) {
+      return sendJson(res, { ok: false, error: testPlatformConflictText(running, requested) });
+    }
     const result = await runtime.sendTest(target ?? '');
     if (result && result.ok) {
-      return sendJson(res, { ok: true, target: result.target, chunkCount: result.chunkCount });
+      const platform = running || requested;
+      return sendJson(res, { ok: true, target: result.target, chunkCount: result.chunkCount, ...(platform === '' ? {} : { platform }) });
     }
     return sendJson(res, { ok: false, error: (result && result.error) || '发送测试消息失败' });
   }

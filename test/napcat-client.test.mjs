@@ -449,3 +449,135 @@ test('渲染: 点「一键启动」会真的调 /napcat/start', async () => {
   await flush();
   assert.ok(api.calls.includes('start'), api.calls.join('|'));
 });
+
+// ---------------- 5. 下载入口：登录后一个都不留，未登录只留一行文字链接 ----------------
+
+test('渲染: 已扫码登录后一个下载入口都不留，当前链接行也一起消失', () => {
+  const { element } = renderNapcat({ status: { ok: true, listening: true, loggedIn: true }, qr: { ok: true, dataUrl: DATA_URL, mtimeMs: 1 } });
+  const text = textOf(element);
+  assert.equal(findAll(element, (n) => n.type === 'a').length, 0, '已登录时不许再有下载链接/按钮');
+  assert.ok(!text.includes('打开 NapCat 下载页'), text);
+  assert.ok(!text.includes('当前链接'), text);
+  assert.ok(!text.includes('复制链接'), text);
+  const labels = findAll(element, (n) => n.type === 'button').map((n) => textOf(n));
+  assert.ok(!labels.some((label) => label.includes('下载')), labels.join('|'));
+});
+
+test('渲染: 未登录时只剩一行小字 + 纯文本链接去 GitHub 下载 NapCat', () => {
+  const { element } = renderNapcat({ status: { ok: true, listening: false, loggedIn: null }, qr: { ok: false, error: QR_WAITING } });
+  const anchors = findAll(element, (n) => n.type === 'a');
+  assert.equal(anchors.length, 1, '未登录时只留一个下载入口');
+  assert.equal(anchors[0].props.href, 'https://github.com/NapNeko/NapCatQQ/releases');
+  assert.equal(textOf(anchors[0]), '去 GitHub 下载 NapCat');
+  const text = textOf(element);
+  assert.ok(text.includes('还没装？去 GitHub 下载 NapCat'), text);
+  assert.ok(!text.includes('打开 NapCat 下载页'), text);
+  // 纯文本链接，不是主按钮：小字 + 下划线，背景不动
+  assert.equal(anchors[0].props.style.fontSize, '12px');
+  assert.equal(anchors[0].props.style.textDecoration, 'underline');
+  assert.equal(anchors[0].props.style.background, undefined);
+});
+
+test('渲染: 未登录但已经有二维码时，同样只有那一个文字链接', () => {
+  const { element } = renderNapcat({ status: { ok: true, listening: true, loggedIn: false }, qr: { ok: true, dataUrl: DATA_URL, mtimeMs: 1 } });
+  const anchors = findAll(element, (n) => n.type === 'a');
+  assert.equal(anchors.length, 1, '二维码在的时候也不许多摆入口');
+  assert.equal(anchors[0].props.href, 'https://github.com/NapNeko/NapCatQQ/releases');
+  assert.ok(!textOf(element).includes('当前链接'), textOf(element));
+});
+
+test('stepsOf: 个人号第 1 步只说「装好并启动」，不再提下载', () => {
+  const { stepsOf } = loadClient();
+  const steps = stepsOf('qq-napcat');
+  assert.equal(steps[0].text, '装好并启动 NapCat / SnowLuma');
+  assert.ok(!steps[0].text.includes('下载'), steps[0].text);
+  assert.equal(steps.length, 3, '三步一条都不能少');
+});
+
+// ---------------- 6. 扫码成功后的一键切换 ----------------
+
+test('shouldOfferUseNapcat: 只在扫完码、且已保存的平台还不是个人号时才给按钮', () => {
+  const { shouldOfferUseNapcat } = loadClient();
+  const scanned = { status: { ok: true, listening: true, loggedIn: true }, qr: null };
+  assert.equal(shouldOfferUseNapcat({ platformId: 'qq-napcat', napcat: scanned, config: { platform: 'qq-official' } }), true);
+  assert.equal(
+    shouldOfferUseNapcat({ platformId: 'qq-napcat', napcat: scanned, config: { platform: 'qq-napcat' } }),
+    false,
+    '已经在跑个人号就没什么可切的'
+  );
+  assert.equal(
+    shouldOfferUseNapcat({ platformId: 'qq-napcat', napcat: { status: { ok: true, loggedIn: false } }, config: { platform: 'qq-official' } }),
+    false,
+    '没扫码登录就没有「这个小号」可切'
+  );
+  assert.equal(shouldOfferUseNapcat({ platformId: 'qq-official', napcat: scanned, config: { platform: 'qq-official' } }), false);
+  assert.equal(shouldOfferUseNapcat({}), false, '空状态不许炸也不许显示');
+});
+
+test('buildSwitchToNapcatPayload: 只把 platform 换成个人号，wsUrl / accessToken 用现值', () => {
+  const base = loadClient();
+  const officialConfig = { ...CONFIG, platform: 'qq-official', qqNapcat: { wsUrl: 'ws://127.0.0.1:3001', accessToken: '***' } };
+  const snap = base.snapshotFrom({ platforms: PLATFORMS }, { config: officialConfig, configPath: 'X' });
+  const picked = { ...base.createInitialState(), ...snap, ...base.switchPlatformForm({ ...snap }, 'qq-napcat') };
+  const payload = base.buildSwitchToNapcatPayload(picked);
+  assert.equal(payload.platform, 'qq-napcat');
+  assert.equal(payload.qqNapcat.wsUrl, 'ws://127.0.0.1:3001');
+  assert.equal(payload.qqNapcat.accessToken, '***', '没改过的令牌原样回去，由宿主合并成已存的那个');
+  assert.equal(payload.storage.rootDir, 'E:\\dsh-im-bridge-data', '字段表之外的配置一个都不能丢');
+
+  const edited = { ...picked, form: { ...picked.form, 'qqNapcat.wsUrl': 'ws://127.0.0.1:3009', 'qqNapcat.accessToken': 'tok-new' } };
+  const typed = base.buildSwitchToNapcatPayload(edited);
+  assert.equal(typed.qqNapcat.wsUrl, 'ws://127.0.0.1:3009', '页面上改过的地址要跟着存');
+  assert.equal(typed.qqNapcat.accessToken, 'tok-new');
+});
+
+test('渲染: 已扫码登录且保存的平台还是官方机器人 -> 出现主按钮「用这个小号」', () => {
+  const { element } = renderNapcat({ status: { ok: true, listening: true, loggedIn: true }, qr: { ok: true, dataUrl: DATA_URL, mtimeMs: 1 } }, { config: { ...CONFIG, platform: 'qq-official' } });
+  const button = findAll(element, (n) => n.type === 'button' && textOf(n) === '用这个小号')[0];
+  assert.ok(button, textOf(element));
+  assert.equal(button.props.style.background, 'var(--dsh-accent, #247bbf)', '必须是主按钮');
+  const labels = findAll(element, (n) => n.type === 'button').map((n) => textOf(n));
+  assert.ok(labels.includes('检测连接') && labels.includes('取消'), '原有按钮一个都不少：' + labels.join('|'));
+});
+
+test('渲染: platform 已经是 qq-napcat 时不渲染「用这个小号」', () => {
+  const { element } = renderNapcat({ status: { ok: true, listening: true, loggedIn: true }, qr: { ok: true, dataUrl: DATA_URL, mtimeMs: 1 } });
+  assert.equal(findAll(element, (n) => n.type === 'button' && textOf(n) === '用这个小号').length, 0);
+});
+
+test('渲染: 点「用这个小号」-> 先存配置（platform=qq-napcat）再 POST /control restart', async () => {
+  const calls = [];
+  const api = {
+    save: (config) => {
+      calls.push({ kind: 'save', config });
+      return Promise.resolve({ ok: true, config, configPath: 'X' });
+    },
+    control: (action) => {
+      calls.push({ kind: 'control', action });
+      return Promise.resolve({ ok: true, status: { running: true, platform: 'qq-napcat' } });
+    },
+    napcatStatus: () => Promise.resolve({ ok: true, listening: true, loggedIn: true }),
+    napcatQr: () => Promise.resolve({ ok: false, error: QR_WAITING })
+  };
+  // 页面状态要和真机一致：config 里 platform 还是 qq-official，但用户已经点了「QQ 个人账号」卡片
+  const base = loadClient();
+  const config = { ...CONFIG, platform: 'qq-official', qqNapcat: { wsUrl: 'ws://127.0.0.1:3001', accessToken: '***' } };
+  const snap = base.snapshotFrom({ platforms: PLATFORMS }, { config, configPath: 'X' });
+  const exports = loadClient({
+    ...base.createInitialState(),
+    ...snap,
+    ...base.switchPlatformForm({ ...snap }, 'qq-napcat'),
+    loading: false,
+    napcat: { status: { ok: true, listening: true, loggedIn: true }, qr: null }
+  });
+  const element = exports.DshBotSection({ api, close: () => {} });
+  const button = findAll(element, (n) => n.type === 'button' && textOf(n) === '用这个小号')[0];
+  assert.ok(button, textOf(element));
+  button.props.onClick();
+  await flush();
+  assert.deepEqual(Array.from(calls, (c) => c.kind), ['save', 'control'], '先落盘再重启');
+  assert.equal(calls[0].config.platform, 'qq-napcat');
+  assert.equal(calls[0].config.qqNapcat.wsUrl, 'ws://127.0.0.1:3001');
+  assert.equal(calls[0].config.qqNapcat.accessToken, '***');
+  assert.equal(calls[1].action, 'restart');
+});

@@ -140,6 +140,9 @@ export function createRuntime({ configStore, logger = null, modules = null, now 
     running: false,
     since: null,
     lastError: null,
+    // 适配器是按哪个平台建的：配置改过但没重启时它和 config.platform 会不一致，
+    // 而「测试消息只能从正在运行的平台发」要的就是这一个。
+    platform: '',
     adapter: null,
     pipeline: null,
     logger: null,
@@ -460,6 +463,7 @@ export function createRuntime({ configStore, logger = null, modules = null, now 
 
       state.adapter = adapter;
       state.pipeline = pipeline;
+      state.platform = config.platform;
       state.running = true;
       state.since = now();
       runtimeLogger.info('dsh-bot 运行时已启动', { platform: config.platform, rootDir: core.storage?.rootDir ?? null });
@@ -475,6 +479,7 @@ export function createRuntime({ configStore, logger = null, modules = null, now 
       }
       state.adapter = null;
       state.pipeline = null;
+      state.platform = '';
       // 半启动的常驻子进程同样要收：否则它在后台永远占着一条 stdio 通道
       if (state.sdkRunner && typeof state.sdkRunner.stop === 'function') {
         try {
@@ -530,6 +535,7 @@ export function createRuntime({ configStore, logger = null, modules = null, now 
     state.adapter = null;
     state.pipeline = null;
     state.sdkRunner = null;
+    state.platform = '';
     state.running = false;
     state.since = null;
     if (adapter && typeof adapter.stop === 'function') {
@@ -630,5 +636,11 @@ export function createRuntime({ configStore, logger = null, modules = null, now 
     return { ok: true, target: resolved.target, chunkCount: sent + failed };
   }
 
-  return { start, stop, restart, status, sendTest, isRunning: () => state.running === true };
+  // 正在跑的适配器属于哪个平台（没在跑就是空串）。配置里改过平台但还没重启时，
+  // 它和 status().platform 是两个答案，而测试消息只能走这一个。
+  function runningPlatform() {
+    return state.running === true ? state.platform : '';
+  }
+
+  return { start, stop, restart, status, sendTest, runningPlatform, isRunning: () => state.running === true };
 }

@@ -70,7 +70,7 @@ JSON 出入，全部 `Cache-Control: no-store`；写接口只接受 POST + `cont
 | POST `/config` | `{config}` | `{ok:true, config, warnings}` 或 `{ok:false, error, problems:[string]}`（校验失败时**不落盘**） |
 | POST `/control` | `{action:'start'|'stop'|'restart'}` | `{ok:true, status}` |
 | GET `/platforms` | — | `{ok:true, platforms:[{id,label,description,fields:[{key,label,type,group,required,secret,placeholder,help}]}]}` |
-| POST `/test-send` | `{target?}` | `{ok:true, target, chunkCount}` 或 `{ok:false, error}`（未启动、找不到收件人、真的发不出去都走这里，**不抛**） |
+| POST `/test-send` | `{target?, platform?}` | `{ok:true, target, chunkCount, platform}` 或 `{ok:false, error}`（未启动、平台对不上、找不到收件人、真的发不出去都走这里，**不抛**） |
 | GET `/logs/tail?lines=100` | — | `{ok:true, lines:[string]}`（读当前日志文件尾部，最多 500 行，路径越界一律拒绝） |
 | POST `/napcat/start` | `{}` | `{ok:true, pid, launcher, alreadyRunning}` 或 `{ok:false, error}` |
 | GET `/napcat/status` | — | `{ok:true, listening, loggedIn, homeDir, port, qrcodeAt?, qrcodeAgeMs?}`；`loggedIn` 取不到就是 `null` |
@@ -82,6 +82,8 @@ JSON 出入，全部 `Cache-Control: no-store`；写接口只接受 POST + `cont
 `/napcat/*` 四条由 `src/plugin/napcat-launcher.mjs` 实现（依赖注入 fs/spawn/net/now/kill，于是真机上没装 NapCat 也能把每个分支验掉）：`start` 在 `qqNapcat.homeDir` 里按 `launcher-win10.bat` → `launcher.bat` → `napcat.bat` → `NapCatWinBootMain.exe` → `napcat.mjs` 取第一个存在的（`.bat` 走 `cmd /c`），`detached:true + stdio:'ignore' + shell:false` 拉起且不重复拉起；`qrcode` 只读 `<homeDir>/napcat/cache/qrcode.png` 或 `<homeDir>/cache/qrcode.png`（>100 字节才算数）；`loggedIn` 只是"端口通 + 二维码文件 60 秒没更新"的弱信号，取不到一律 `null`。未配置 `homeDir` 时四条都回同一句人话并保持 HTTP 200。
 
 `group` ∈ `basic|advanced`（缺省 `advanced`）：客户端只按它决定**默认可见**还是**收进「显示全部字段（排查用）」开关后面**（开关默认关闭，状态只活在组件内、不落配置）。basic 的口径固定为这 9 项（每个平台只出现自己相关的那些）：平台下拉、`qqOfficial.appId`、`qqOfficial.appSecret`、`qqNapcat.wsUrl`、`qqNapcat.accessToken`、`qqNapcat.homeDir`、`storage.rootDir`、`log.dir`、`enabled`。其余（并发/限流/分段/语音转写/审批/跑法/模型/预设/超时/`reply.*`/`social.*`/`approval.*`/`dsh.*`、以及**白名单**、`testTarget`）一律 advanced；新增字段默认 advanced，想进首屏必须显式标注并同步改 `test/plugin-host.test.mjs` 的 BASIC 表。
+
+`/test-send` 的 `platform` 是「用户在设置页点的是哪张卡片」，缺省取配置里的 `platform`；它**只允许等于正在运行的那个平台**（适配器是按哪个平台建的），对不上直接回 `{ok:false, error}` 且一条都不发——否则用户在小号卡片上点测试，话会发给官方机器人那个号。
 
 `/test-send` 的收件人解析顺序：显式 `target` → 配置 `testTarget` → 平台启发式（`qq-official` 取 `security.userWhitelist` 里 ≥20 位十六进制的 openid，`qq-napcat` 取纯数字的 QQ 号）。发送走当前已启动适配器的 `deps.sendReply`（OneBot 的适配器 deps 为 null，按 `onebotSend` 模块补齐），固定文案 + 私聊。
 
