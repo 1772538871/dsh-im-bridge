@@ -3,22 +3,26 @@
  * QQ 不渲染任何 markdown：### 会原样显示成井号、** 会变成星号、表格会满屏竖线，
  * 所以这里做一次有损但可读的转换，而不是让用户看一堆符号。
  */
-// 一眼就能看出是 AI 的套话：整行删掉，而不是改写（改写容易留下半句怪话）
-const BOILERPLATE_LINE = [
-  /^(希望|但愿)(这|以上)?(对你|对您)?(有|能)(所)?(帮助|用)/u,
-  /^(以上|就这些|先这样|总之|综上|总的来说)[，,。]?$/u,
-  /^(如|若)(有)?(其他|其它|还有)?(问题|需要|疑问)/u,
-  /^(还|另有)(有)?(什么|啥)?(需要|问题|要问)(我)?(吗|呢)/u,
-  /^(祝|愿你)/u,
-  /^(如果)(你|您|需要我)?(还)?(想|要)/u
+// 一眼就能看出是 AI 的套话：整行删掉（改写容易留下半句怪话）
+// 两类：① 整行就是套话；② 短行里含特定套话（长正文里提到这些词不动）
+const BOILERPLATE_PURE = /^(以上|以上全部|总之|综上|总而言之|总的来说|就这些|先这样|先到这|完毕|结束|祝好|敬礼|希望对你有所帮助|希望对你有帮助|希望能帮到你|希望这些对你有帮助){1,3}$/u;
+const BOILERPLATE_IN_SHORT = [
+  /希望(这|以上)?(对你|对您)?(有|能)(所)?(帮助|用)/u,
+  /(还有|如|若)(其他|其它|别的|什么|啥)?(问题|需要|疑问|要问|吩咐)/u,
+  /还需要我(做|帮|干)/u,
+  /需要我(做|帮|干)(什么|啥)/u,
+  /(如果|要是)(还)?(需要|想要)我/u,
+  /祝你(今天|一切|生活|工作)/u
 ];
+const SHORT_LINE_MAX = 40;
 
 function dropBoilerplate(text) {
   const kept = [];
   for (const line of text.split("\n")) {
     const trimmed = line.trim();
-    // 只删"独立成行"的套话；正文里提到这些词不动
-    if (trimmed !== "" && BOILERPLATE_LINE.some((pattern) => pattern.test(trimmed))) continue;
+    // 压掉标点后如果整行只剩套话，就丢掉（「总之，先这样。」这种组合也能命中）
+    if (trimmed !== "" && BOILERPLATE_PURE.test(trimmed.replace(/[，,。.!！~～、;；:：\s]/gu, ""))) continue;
+    if (trimmed !== "" && trimmed.length <= SHORT_LINE_MAX && BOILERPLATE_IN_SHORT.some((pattern) => pattern.test(trimmed))) continue;
     kept.push(line);
   }
   return kept.join("\n");
