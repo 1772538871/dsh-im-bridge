@@ -16,6 +16,7 @@ import {
   parseCommand,
 } from './commands.mjs';
 import { formatForQq } from './format.mjs';
+import { appendLesson, isTeaching } from './lessons.mjs';
 import {
   adoptSuggestedPersona,
   appendJournalEntry,
@@ -630,6 +631,12 @@ export function createPipeline({
    * 估个时长。字数/附件反映的是要读多少，真跑多久取决于模型和工具，
    * 所以这里只用来定量级，再被上一次真实耗时兜底。
    */
+  const TEACH_REPLIES = ["记下了", "行，记着了", "记住了，下次就这么说"];
+
+  function pickTeachReply() {
+    return TEACH_REPLIES[Math.floor(Math.random() * TEACH_REPLIES.length)];
+  }
+
   const UNCLEAR_REPLIES = ["？", "啥？", "嗯？你说哪件事", "在，说"];
 
   /** 模糊回复就回一句短的问回去：比猜一件事去做更像人 */
@@ -942,7 +949,21 @@ export function createPipeline({
 
           // 长任务最怕"静默"：先回一条回执，超过阈值再报进度（用主动消息，不占被动回复配额）
           const heavyTask = /(整理|分析|总结|归纳|阅读|读一下|读完|遍历|批量|全部|每个|扫描|重构|改代码|修\s*bug|写成|生成|导出|翻译|对比)/.test(typeof message?.text === "string" ? message.text : "");
-          // 「ok」「嗯」「好的」这种没有指向的回复：先问清楚，别自己猜一件事去做
+          // 用户在手把手教我怎么回：存进 prompts/lessons.md，之后每轮都带着
+        const rawText = typeof message?.text === "string" ? message.text : "";
+        const taught = /^\/记住\s+/u.test(rawText) ? rawText.replace(/^\/记住\s+/u, "") : rawText;
+        if ((isTeaching(rawText) || /^\/记住\s+/u.test(rawText)) && saved.length === 0) {
+          const dataDir = config?.storage?.rootDir ?? "";
+          const saved2 = await appendLesson({ dataDir, text: taught });
+          if (saved2.ok) {
+            await deliver(message, pickTeachReply());
+            return;
+          }
+          await deliver(message, "想记下来但是写文件失败了：" + String(saved2.error ?? "未知原因").slice(0, 120));
+          return;
+        }
+
+        // 「ok」「嗯」「好的」这种没有指向的回复：先问清楚，别自己猜一件事去做
         const unclearText = typeof message?.text === "string" ? message.text.trim() : "";
         const UNCLEAR_WORDS = /^(ok|okay|嗯+|好|好的|好滴|收到|行|可以|👌|👍|在吗|在么)$/iu;
         if (config?.reply?.askWhenUnclear === true && saved.length === 0 && UNCLEAR_WORDS.test(unclearText)) {

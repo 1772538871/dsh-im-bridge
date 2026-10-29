@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { JOURNAL_TAIL_CHARS, JOURNAL_TAIL_COUNT, readJournalTail } from './journal.mjs';
+import { readLessonsTail } from './lessons.mjs';
 
 const KIND_LABEL = { image: "图片", file: "文件", record: "语音", text: "文本", other: "其他" };
 
@@ -13,6 +14,8 @@ const PROMPT_SECTIONS = [
 const USER_SECTION_TITLE = "[用户消息]";
 // 日记单独成段：它跟着角色卡走，但内容会自己长，所以标题和角色卡分开
 export const JOURNAL_SECTION_TITLE = "[最近日记]";
+// 用户手把手教过的说法：优先级高于人格卡（他亲口说过要这样答）
+export const LESSONS_SECTION_TITLE = "[用户教过的]";
 // 模板骨架里的空占位：标题「# 角色名」和只有冒号没有内容的条目「- 性格：」。
 // 刚建出来的角色卡因此等于"没写"，不会把一张空白卡塞进每轮对话。
 const PLACEHOLDER_LINE = [/^#\s*角色名$/u, /^[-*·]\s*[^：:]{1,20}[：:]\s*$/u];
@@ -144,10 +147,13 @@ export function buildPrompt({ config, message, savedAttachments = [], voiceTrans
     count: JOURNAL_TAIL_COUNT,
     maxChars: JOURNAL_TAIL_CHARS,
   });
-  if (sections.length === 0 && journal.length === 0) return body;
+  // 用户亲口教过的说法：优先级最高，紧跟在角色设定之后
+  const lessons = readLessonsTail({ dataDir: dir, fsImpl });
+  if (sections.length === 0 && journal.length === 0 && lessons.length === 0) return body;
 
   const blocks = sections.map((section) => section.title + "\n" + section.body.join("\n"));
   // 日记排在角色卡之后、"用户消息"之前：先说我是谁，再说我最近在想什么
+  if (lessons.length > 0) blocks.push(LESSONS_SECTION_TITLE + "\n" + lessons.map((item) => "- " + item.body).join("\n"));
   if (journal.length > 0) blocks.push(JOURNAL_SECTION_TITLE + "\n" + journal.join("\n\n"));
   blocks.push(USER_SECTION_TITLE + "\n" + body);
   return blocks.join("\n\n");
