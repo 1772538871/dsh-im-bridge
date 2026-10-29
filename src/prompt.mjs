@@ -3,6 +3,7 @@ import { join } from 'node:path';
 
 import { JOURNAL_TAIL_CHARS, JOURNAL_TAIL_COUNT, readJournalTail } from './journal.mjs';
 import { readLessonsTail } from './lessons.mjs';
+import { PROMPT_NOTE_MAX_CHARS, PROMPT_STICKER_LIMIT, pickStickersForPrompt } from './stickers.mjs';
 
 const KIND_LABEL = { image: "图片", file: "文件", record: "语音", text: "文本", other: "其他" };
 
@@ -16,6 +17,11 @@ const USER_SECTION_TITLE = "[用户消息]";
 export const JOURNAL_SECTION_TITLE = "[最近日记]";
 // 用户手把手教过的说法：优先级高于人格卡（他亲口说过要这样答）
 export const LESSONS_SECTION_TITLE = "[用户教过的]";
+// 收藏的表情：库空时整段不出现，提示词与此前逐字一致
+export const STICKERS_SECTION_TITLE = "[表情库]";
+// 只给"怎么用"，不劝它发：表情发错了比不发更像被打断
+export const STICKERS_HINT =
+  "想发表情时，从下面挑一张，在回复里单独一行写 [[sendimage: <路径>]]；不合适就别发，不要为了发表情而发出。";
 // 模板骨架里的空占位：标题「# 角色名」和只有冒号没有内容的条目「- 性格：」。
 // 刚建出来的角色卡因此等于"没写"，不会把一张空白卡塞进每轮对话。
 const PLACEHOLDER_LINE = [/^#\s*角色名$/u, /^[-*·]\s*[^：:]{1,20}[：:]\s*$/u];
@@ -149,12 +155,29 @@ export function buildPrompt({ config, message, savedAttachments = [], voiceTrans
   });
   // 用户亲口教过的说法：优先级最高，紧跟在角色设定之后
   const lessons = readLessonsTail({ dataDir: dir, fsImpl });
-  if (sections.length === 0 && journal.length === 0 && lessons.length === 0) return body;
+  // 表情库跟着数据目录走；库空（或目录没配）时返回空数组，这一段就不出现
+  const stickers = pickStickersForPrompt({
+    rootDir: dir,
+    limit: PROMPT_STICKER_LIMIT,
+    noteMaxChars: PROMPT_NOTE_MAX_CHARS,
+    fsImpl,
+  });
+  if (sections.length === 0 && journal.length === 0 && lessons.length === 0 && stickers.length === 0) return body;
 
   const blocks = sections.map((section) => section.title + "\n" + section.body.join("\n"));
   // 日记排在角色卡之后、"用户消息"之前：先说我是谁，再说我最近在想什么
   if (lessons.length > 0) blocks.push(LESSONS_SECTION_TITLE + "\n" + lessons.map((item) => "- " + item.body).join("\n"));
   if (journal.length > 0) blocks.push(JOURNAL_SECTION_TITLE + "\n" + journal.join("\n\n"));
+  // 表情库紧贴用户消息：要发就发在这一轮，翻回去找容易忘了上下文
+  if (stickers.length > 0) {
+    blocks.push(
+      STICKERS_SECTION_TITLE +
+        "\n" +
+        [STICKERS_HINT, ...stickers.map((item) => "- " + (item.animated ? "[动图] " : "") + "备注：" + item.note + " → " + item.path)].join(
+          "\n",
+        ),
+    );
+  }
   blocks.push(USER_SECTION_TITLE + "\n" + body);
   return blocks.join("\n\n");
 }

@@ -11,6 +11,14 @@ import {
   commandJournalFailedText,
   commandNewSessionText,
   commandStatusText,
+  commandStickerCollectedText,
+  commandStickerFailedText,
+  commandStickerListText,
+  commandStickerMissingText,
+  commandStickerNoDataDirText,
+  commandStickerNoImageText,
+  commandStickerRemovedText,
+  commandStickerRemoveUsageText,
   defaultDshHome,
   exportSessionMarkdown,
   parseCommand,
@@ -29,6 +37,7 @@ import {
 } from './journal.mjs';
 import { buildPrompt } from "./prompt.mjs";
 import { createSessionBinding } from './session-binding.mjs';
+import { LIST_STICKER_LIMIT, addSticker, listStickers, removeSticker } from './stickers.mjs';
 
 const DEFAULT_ERROR_PREFIX = "[bridge] ";
 const NO_TEXT_PLACEHOLDER = "（DSH 这次没有返回文字内容）";
@@ -374,6 +383,9 @@ export function createPipeline({
   // 内省要回顾"刚才聊了什么"，只留最近 20 轮；它不进提示词，也不落盘
   const RECENT_TURNS_MAX = 20;
   const recentTurns = [];
+  // 每个会话最近一张入站图片的绝对路径：/收藏 要收的就是它。只放内存——重启后用户再发一张就有
+  const lastImageByChat = new Map();
+  const LAST_IMAGE_CHATS_MAX = 200;
   // 后台内省挂在这里，测试用 settle() 等它落盘；生产上没人等它
   const background = new Set();
   let turnsSinceJournal = 0;
@@ -696,6 +708,62 @@ export function createPipeline({
     return typeof fromConfig === "string" ? fromConfig : "";
   }
 
+  function rememberInboundImage(chatKey, saved) {
+    const items = Array.isArray(saved) ? saved : [];
+    let last = "";
+    for (const item of items) {
+      if (item && item.kind === "image" && typeof item.path === "string" && item.path !== "") last = item.path;
+    }
+    if (last === "") return;
+    lastImageByChat.set(chatKey, last);
+    // 只有内存表，不能跟着会话数一直长：超过上限就从最旧的那个会话开始丢
+    while (lastImageByChat.size > LAST_IMAGE_CHATS_MAX) {
+      const oldest = lastImageByChat.keys().next().value;
+      if (oldest === undefined) break;
+      lastImageByChat.delete(oldest);
+    }
+  }
+
+  /** OneBot 的表情包标记：图片段的 sub_type 为 1，或 summary 里带「表情」（NapCat 写的是 [动画表情]）。 */
+  function isStickerSegment(segment) {
+    if (!segment || segment.type !== "image") return false;
+    const data = segment.data && typeof segment.data === "object" ? segment.data : {};
+    if (String(data.sub_type ?? "") === "1") return true;
+    const summary = typeof data.summary === "string" ? data.summary : "";
+    return summary.includes("表情");
+  }
+
+  /**
+   * 顺手收藏：只收"被标成表情包、且用户配了文字"的那种。
+   * 没配字的图只留在 media 里——库里堆一堆没备注的图，等于每轮都往提示词里塞噪音。
+   */
+  async function autoCollectSticker({ message, saved, chatKey }) {
+    const note = typeof message?.text === "string" ? message.text.trim() : "";
+    if (note === "") return null;
+    const rootDir = dataRootDir();
+    if (rootDir === "") return null;
+    const segments = (Array.isArray(message?.segments) ? message.segments : []).filter((item) => item?.type === "image");
+    const images = (Array.isArray(saved) ? saved : []).filter((item) => item?.kind === "image");
+    // 两张表一一对应（landAttachments 按段落顺序落盘），所以可以直接按同一个下标配
+    for (let index = images.length - 1; index >= 0; index -= 1) {
+      const path = typeof images[index]?.path === "string" ? images[index].path : "";
+      if (path === "" || !isStickerSegment(segments[index])) continue;
+      const outcome = await addSticker({ rootDir, sourcePath: path, note, from: chatKey, source: "auto" });
+      if (outcome.ok) {
+        logger?.info?.("顺手收藏了一张表情", {
+          chatKey,
+          id: outcome.entry.id,
+          note: outcome.entry.note,
+          duplicated: outcome.duplicated === true,
+        });
+      } else {
+        logger?.warn?.("顺手收藏表情失败", { chatKey, reason: outcome.error });
+      }
+      return outcome;
+    }
+    return null;
+  }
+
   function promptsDir() {
     return promptsDirOf(dataRootDir());
   }
@@ -888,6 +956,72 @@ export function createPipeline({
       if (outcome.ok) logger?.info?.('会话已导出', { chatKey, path: outcome.path, count: outcome.count });
       else logger?.warn?.('导出会话失败', { chatKey, reason: outcome.message });
       await deliver(message, outcome.ok ? commandExportDoneText(outcome) : commandExportFailedText(outcome.message));
+      return;
+    }
+    if (command.name === 'collect') {
+      const rootDir = dataRootDir();
+      if (rootDir === '') {
+        await deliver(message, commandStickerNoDataDirText());
+        return;
+      }
+      const sourcePath = lastImageByChat.get(chatKey) ?? '';
+      if (sourcePath === '') {
+        await deliver(message, commandStickerNoImageText());
+        return;
+      }
+      const outcome = await addSticker({ rootDir, sourcePath, note: command.args, from: chatKey, source: 'command' });
+      if (!outcome.ok) {
+        logger?.warn?.('收藏表情失败', { chatKey, reason: outcome.error });
+        await deliver(message, commandStickerFailedText(outcome.error));
+        return;
+      }
+      logger?.info?.('收藏了一张表情', {
+        chatKey,
+        id: outcome.entry.id,
+        duplicated: outcome.duplicated === true,
+        animated: outcome.entry.animated === true,
+      });
+      // 重复收藏报的是"这张在库里的序号"（就是 /表情 的第几条），新收的报的是库里的总张数
+      const n = outcome.duplicated === true ? outcome.position : outcome.count;
+      await deliver(
+        message,
+        commandStickerCollectedText({ n, note: outcome.entry.note, duplicated: outcome.duplicated === true }),
+      );
+      return;
+    }
+    if (command.name === 'stickerList') {
+      await deliver(message, commandStickerListText(listStickers({ rootDir: dataRootDir() }), { limit: LIST_STICKER_LIMIT }));
+      return;
+    }
+    if (command.name === 'stickerRemove') {
+      const rootDir = dataRootDir();
+      const wanted = command.args.trim();
+      if (rootDir === '') {
+        await deliver(message, commandStickerNoDataDirText());
+        return;
+      }
+      if (wanted === '') {
+        await deliver(message, commandStickerRemoveUsageText());
+        return;
+      }
+      // 序号按 /表情 的排序（所有条目，不止列出来的 10 条）算，这样第 11 张也能用序号删
+      let targetId = wanted;
+      if (/^\d+$/u.test(wanted)) {
+        const hit = listStickers({ rootDir })[Number(wanted) - 1];
+        if (hit === undefined) {
+          await deliver(message, commandStickerMissingText(wanted));
+          return;
+        }
+        targetId = hit.id;
+      }
+      const outcome = await removeSticker({ rootDir, id: targetId });
+      if (!outcome.ok) {
+        logger?.info?.('没删掉表情', { chatKey, reason: outcome.error });
+        await deliver(message, commandStickerMissingText(wanted));
+        return;
+      }
+      logger?.info?.('删掉了一张表情', { chatKey, id: outcome.entry.id, remaining: outcome.count });
+      await deliver(message, commandStickerRemovedText({ note: outcome.entry.note, remaining: outcome.count }));
     }
   }
 
@@ -930,6 +1064,7 @@ export function createPipeline({
       }
 
       const { saved, voiceTranscript } = await landAttachments({ message, raw, resolved });
+      rememberInboundImage(chatKey, saved);
 
       await serial.run(chatKey, async () => {
         const command = parseCommand(typeof message?.text === 'string' ? message.text : '');
@@ -937,6 +1072,8 @@ export function createPipeline({
           await handleCommand({ command, message, chatKey, resolved });
           return;
         }
+        // 命令自带回执；这里只管"发了表情包还配了文字"的顺手收藏
+        await autoCollectSticker({ message, saved, chatKey });
 
         // "读绑定 → 跑 → 写绑定"整段进锁：两条并发消息同时读到空绑定会各建一个会话，
         // 后写的把先写的覆盖掉，还会同时占住同一份写句柄（网页里点开就是空白）

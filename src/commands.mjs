@@ -17,7 +17,12 @@ const COMMANDS = new Map([
   // 人格那一套：日记是它自己写的，采纳才轮到它改自己
   ['日记', 'journal'],
   ['写日记', 'journal'],
-  ['采纳', 'adopt']
+  ['采纳', 'adopt'],
+  // 表情库：收 / 看 / 删。'/存表情' 是 '/收藏' 的同义词，'/' 后面打中文比切输入法顺手
+  ['收藏', 'collect'],
+  ['存表情', 'collect'],
+  ['表情', 'stickerList'],
+  ['删表情', 'stickerRemove']
 ]);
 
 const ROLE_TITLE = { user: '用户', assistant: 'DSH' };
@@ -70,7 +75,7 @@ export function commandHelpText({ sessionId = null } = {}) {
   return [
     '可用命令（发在 QQ 里，不送进 DSH）：',
     '/new 开新会话 · /status 看状态 · /export 导出历史 · /日记 让它写日记 · /采纳 应用人格建议 · /help 看这张表',
-    '中文同义词：/新会话 /状态 /导出 /帮助；/写日记 等同 /日记',
+    '/收藏 <备注> 存表情 · /表情 看表情库 · /删表情 删一张；中文同义词：/新会话 /状态 /导出 /帮助；/写日记 等同 /日记；/存表情 等同 /收藏',
     id === '' ? '当前会话：还没建（发一句话就有了）' : '当前会话：' + id
   ].join('\n');
 }
@@ -145,6 +150,57 @@ export function commandExportDoneText({ path = '', count = 0 } = {}) {
 
 export function commandExportFailedText(reason) {
   return '这次没导出成：' + (reason === undefined || reason === null || reason === '' ? '原因不明' : String(reason));
+}
+
+// ---------------------------------------------------------------- 表情库
+
+function stickerNoteOf(note) {
+  return typeof note === 'string' && note.trim() !== '' ? note.trim() : '无备注';
+}
+
+/** 收藏回执：说清是第几张、叫什么；重复收藏时明说"这张已经收过了"，别假装又收了一张。 */
+export function commandStickerCollectedText({ n = 1, note = '', duplicated = false } = {}) {
+  const count = Number.isFinite(Number(n)) && Number(n) > 0 ? Math.floor(Number(n)) : 1;
+  const head = duplicated === true ? '这张已经收过了' : '收下了';
+  return head + '（第 ' + count + ' 张）：' + stickerNoteOf(note);
+}
+
+export function commandStickerFailedText(reason) {
+  return '这次没收藏成：' + (reason === undefined || reason === null || reason === '' ? '原因不明' : String(reason));
+}
+
+export function commandStickerNoDataDirText() {
+  return '没配置数据目录（storage.rootDir），表情没地方存。';
+}
+
+export function commandStickerNoImageText() {
+  return '还没收到过图：先发一张，再说 /收藏 <备注>。';
+}
+
+/** /表情 的列表：序号能直接喂给 /删表情，id 前 6 位用来看清是哪张。 */
+export function commandStickerListText(entries = [], { limit = 10 } = {}) {
+  const list = Array.isArray(entries) ? entries.filter((item) => item && typeof item.id === 'string') : [];
+  const cap = Number.isFinite(Number(limit)) && Number(limit) > 0 ? Math.floor(Number(limit)) : 10;
+  if (list.length === 0) return '表情库还是空的：发张图，再说一句 /收藏 <备注> 就收进来了。';
+  const lines = list
+    .slice(0, cap)
+    .map((item, index) => index + 1 + '. ' + stickerNoteOf(item.note) + ' · ' + item.id.slice(0, 6));
+  lines.push('/删表情 <序号或id> 可以删掉。');
+  return lines.join('\n');
+}
+
+export function commandStickerMissingText(query = '') {
+  const wanted = typeof query === 'string' && query.trim() !== '' ? '：' + query.trim() : '';
+  return '库里没有这一张' + wanted + '。发 /表情 看列表。';
+}
+
+export function commandStickerRemoveUsageText() {
+  return '要删哪一张？发 /表情 看列表，再用 /删表情 <序号或id>。';
+}
+
+export function commandStickerRemovedText({ note = '', remaining = 0 } = {}) {
+  const left = Number.isFinite(Number(remaining)) && Number(remaining) > 0 ? Math.floor(Number(remaining)) : 0;
+  return '删掉了：' + stickerNoteOf(note) + '（库里还剩 ' + left + ' 张）';
 }
 
 export function defaultDshHome(env = process.env) {
