@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { readFile, stat } from 'node:fs/promises';
+import { readFile, readdir, stat } from 'node:fs/promises';
 import net from 'node:net';
 import { join } from 'node:path';
 
@@ -22,6 +22,11 @@ export const DEFAULT_NAPCAT_PORT = 3001;
 export const CONNECT_TIMEOUT_MS = 500;
 // NapCat 的 WebUI(6099) 与 OneBot HTTP(3000)：用来判断它到底在不在跑
 export const EXTRA_PORTS = [3000, 6099];
+// NapCat 自己把网络配置写在这里：onebot11_<uin>.json（文件名带小号）与 webui.json（面板端口/令牌）
+export const NAPCAT_CONFIG_DIR = 'napcat/config';
+export const ONEBOT_FILE_PREFIX = 'onebot11_';
+export const WEBUI_FILE = 'webui.json';
+export const WEBUI_DEFAULT_PORT = 6099;
 
 export const MSG_NO_HOME = '还没填 NapCat 安装目录：在高级设置里填一次（例如 D:\\NapCat），之后就只用点启动';
 export const MSG_NO_QRCODE = '还没生成二维码：先点一键启动，等它出码（一般 5–20 秒）';
@@ -113,6 +118,66 @@ function probePort(netApi, host, port, timeoutMs) {
   });
 }
 
+/** 纯数字才认："2484026025abd" / "" 这类一律当没有，绝不编一个号。 */
+function digitsOf(value) {
+  const text = toText(value).trim();
+  return /^\d+$/.test(text) ? text : '';
+}
+
+/** 从 onebot11_<uin>.json 的文件名取 uin：NapCat 的命名就是唯一的事实来源。 */
+export function uinFromOnebotName(name) {
+  const matched = /^onebot11_(\d+)\.json$/i.exec(toText(name).trim());
+  return matched ? matched[1] : '';
+}
+
+/** onebot11_<uin>.json -> 第一个 WebSocket 服务器的连接信息；结构不对就是 null，不猜端口。 */
+export function onebotServerOf(value) {
+  const root = value && typeof value === 'object' ? value : {};
+  const network = root.network && typeof root.network === 'object' ? root.network : {};
+  const servers = Array.isArray(network.websocketServers) ? network.websocketServers : [];
+  const first = servers.length > 0 && servers[0] && typeof servers[0] === 'object' ? servers[0] : null;
+  if (first === null) return null;
+  const port = Number(first.port);
+  if (!Number.isFinite(port) || port < 1 || port > 65535) return null;
+  return {
+    wsUrl: 'ws://127.0.0.1:' + Math.floor(port),
+    token: toText(first.token).trim(),
+    name: toText(first.name).trim()
+  };
+}
+
+/**
+ * 打开系统默认浏览器的两条路：先 cmd start，再 rundll32。
+ * URL 只作为参数交给 cmd，绝不拼进 shell 字符串。
+ */
+export function browserOpenPlans(url) {
+  const target = toText(url).trim();
+  if (target === '') return [];
+  return [
+    { file: 'cmd', args: ['/c', 'start', '', target] },
+    { file: 'rundll32', args: ['url.dll,FileProtocolHandler', target] }
+  ];
+}
+
+/** 起一个 detached 的进程去开链接：NapCat 是长驻程序，浏览器也不该把宿主挂住。 */
+export function openInSystemBrowser(spawnFn, url) {
+  let lastError = null;
+  for (const plan of browserOpenPlans(url)) {
+    try {
+      const child = spawnFn(plan.file, plan.args, { detached: true, stdio: 'ignore', windowsHide: true, shell: false });
+      try {
+        if (child && typeof child.unref === 'function') child.unref();
+      } catch {
+        // unref 失败不影响它已经被拉起来了
+      }
+      return { ok: true, via: plan.file };
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  return { ok: false, error: errorText(lastError || new Error('没有可用的浏览器打开方式')) };
+}
+
 function configOf(config) {
   if (typeof config === 'function') {
     try {
@@ -140,7 +205,8 @@ export function createNapcatLauncher(deps = {}) {
     now = () => Date.now(),
     killImpl = null,
     nodePath = '',
-    connectTimeoutMs = CONNECT_TIMEOUT_MS
+    connectTimeoutMs = CONNECT_TIMEOUT_MS,
+    openImpl = null
   } = deps;
 
   const fsApi = fsImpl || {
@@ -152,7 +218,8 @@ export function createNapcatLauncher(deps = {}) {
       }
     },
     stat: (target) => stat(target),
-    readFile: (target) => readFile(target)
+    readFile: (target) => readFile(target),
+    readdir: (target) => readdir(target)
   };
   const spawnFn = typeof spawnImpl === 'function' ? spawnImpl : spawn;
   const netApi = netImpl || net;
@@ -162,6 +229,8 @@ export function createNapcatLauncher(deps = {}) {
 
   // 内存标记（不落盘：pid 文件过期比没有更坑）：记着"这个进程是本插件拉起来的"
   const own = { pid: 0, launcher: '' };
+  // 打开浏览器失败要能降级成人话，注入点只是为了测试不去真的开窗口
+  const openTarget = typeof openImpl === 'function' ? openImpl : (url) => openInSystemBrowser(spawnFn, url);
 
   function napcatConfig() {
     const root = configOf(config);
@@ -184,6 +253,85 @@ export function createNapcatLauncher(deps = {}) {
     } catch {
       return false;
     }
+  }
+
+  function configDirOf(home) {
+    return join(home, NAPCAT_CONFIG_DIR);
+  }
+
+  /** 读一个 JSON 文件。读不到 / 不是 JSON / 不是对象 → null，永不抛。 */
+  async function readJsonFile(file) {
+    let raw;
+    try {
+      raw = await fsApi.readFile(file);
+    } catch {
+      return null;
+    }
+    const text = Buffer.isBuffer(raw) ? raw.toString('utf8') : String(raw ?? '');
+    try {
+      const parsed = JSON.parse(text);
+      return parsed && typeof parsed === 'object' ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** 列目录名。没有 readdir 能力（老注入件）或读不到 → null，调用方当"没扫到"。 */
+  async function listNames(dir) {
+    if (typeof fsApi.readdir !== 'function') return null;
+    try {
+      const items = await fsApi.readdir(dir);
+      return Array.isArray(items) ? items.map((item) => String(item)) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * 小号账号 + OneBot 连接信息，只读、只降级：
+   * uin 先看 onebot11_<uin>.json 的文件名，再看 webui.json.autoLoginAccount，都没有就是 null。
+   */
+  async function probeAccount(home) {
+    try {
+      const root = toText(home).trim();
+      if (root === '') return { account: null, onebot: null };
+      const dir = configDirOf(root);
+      const names = await listNames(dir);
+      let uin = '';
+      let file = '';
+      for (const name of names || []) {
+        const found = uinFromOnebotName(name);
+        if (found !== '') {
+          uin = found;
+          file = name;
+          break;
+        }
+      }
+      if (uin === '') {
+        const webui = await readJsonFile(join(dir, WEBUI_FILE));
+        const auto = digitsOf(webui && webui.autoLoginAccount);
+        if (auto !== '') {
+          uin = auto;
+          file = ONEBOT_FILE_PREFIX + auto + '.json';
+        }
+      }
+      if (uin === '') return { account: null, onebot: null };
+      const onebot = await readJsonFile(join(dir, file));
+      return { account: uin, onebot: onebotServerOf(onebot) };
+    } catch {
+      return { account: null, onebot: null };
+    }
+  }
+
+  /** WebUI 面板的端口与令牌：读不到就回落 6099 / 空令牌，不编。 */
+  async function readWebui(home) {
+    const root = toText(home).trim();
+    const info = root === '' ? null : await readJsonFile(join(configDirOf(root), WEBUI_FILE));
+    const port = Number(info && info.port);
+    return {
+      port: Number.isFinite(port) && port >= 1 && port <= 65535 ? Math.floor(port) : WEBUI_DEFAULT_PORT,
+      token: toText(info && info.token).trim()
+    };
   }
 
   /**
@@ -289,8 +437,11 @@ export function createNapcatLauncher(deps = {}) {
   async function status() {
     const home = homeDirValue();
     const port = portValue();
+    // 账号与 OneBot 参数是"顺带告诉前端一声"：读不到就 null，端口探测该怎么走还怎么走
+    const probe = await probeAccount(home);
+    const known = { account: probe.account, onebot: probe.onebot };
     try {
-      if (home === '') return { ok: false, listening: false, loggedIn: null, homeDir: '', port, error: MSG_NO_HOME };
+      if (home === '') return { ok: false, listening: false, loggedIn: null, homeDir: '', port, ...known, error: MSG_NO_HOME };
       // NapCat 可能只开了 WebUI(6099) 与 OneBot HTTP(3000)，WS 端口还没开：
       // 只要任一端口在听，就说明它确实在跑（否则界面会误报「未启动」）
       const candidates = [port, ...EXTRA_PORTS.filter((item) => item !== port)];
@@ -298,11 +449,11 @@ export function createNapcatLauncher(deps = {}) {
       const ports = {};
       candidates.forEach((item, index) => { ports[item] = probed[index] === true; });
       const listening = probed.some((hit) => hit === true);
-      if (!listening) return { ok: true, listening: false, loggedIn: null, homeDir: home, port, ports };
+      if (!listening) return { ok: true, listening: false, loggedIn: null, homeDir: home, port, ports, ...known };
       const qr = await readQrCode(home);
       if (!qr.ok) {
         // 端口通但没有图：可能刚登录完把图删了，也可能还没出码。两种都说不准，如实给 null
-        return { ok: true, listening: true, loggedIn: null, homeDir: home, port, ports, qrHint: qr.error };
+        return { ok: true, listening: true, loggedIn: null, homeDir: home, port, ports, ...known, qrHint: qr.error };
       }
       const ageMs = Math.max(0, Number(clock()) - qr.mtimeMs);
       return {
@@ -312,11 +463,49 @@ export function createNapcatLauncher(deps = {}) {
         homeDir: home,
         port,
         ports,
+        ...known,
         qrcodeAt: qr.mtimeMs,
         qrcodeAgeMs: ageMs
       };
     } catch (error) {
-      return { ok: false, listening: false, loggedIn: null, homeDir: home, port, error: '探测 NapCat 端口失败：' + errorText(error) };
+      return { ok: false, listening: false, loggedIn: null, homeDir: home, port, ...known, error: '探测 NapCat 端口失败：' + errorText(error) };
+    }
+  }
+
+  /**
+   * 「打开 NapCat 面板」：确保程序在跑，再用系统浏览器打开它的 WebUI，并把令牌一起回给前端。
+   * 端口/令牌来自 NapCat 自己的 webui.json；读不到就是 6099 + 空令牌（那就让人自己输）。
+   */
+  async function openWebUI() {
+    const home = homeDirValue();
+    let webui = { port: WEBUI_DEFAULT_PORT, token: '' };
+    try {
+      webui = await readWebui(home);
+    } catch {
+      // 读不到面板配置就只能按默认端口开，别把整件事搞失败
+    }
+    const url = 'http://127.0.0.1:' + webui.port + '/';
+    const answer = { url, token: webui.token };
+    try {
+      if (home === '') return { ok: false, ...answer, opened: false, error: MSG_NO_HOME };
+      // start() 自己会跳过"已经在跑"的情况：这里绝不重复拉起第二个 NapCat
+      const started = await start();
+      let opened;
+      try {
+        opened = await Promise.resolve(openTarget(url));
+      } catch (error) {
+        opened = { ok: false, error: errorText(error) };
+      }
+      if (!opened || opened.ok === false) {
+        const why = errorText((opened && opened.error) || new Error('未知原因'));
+        return { ok: false, ...answer, opened: false, error: '没法自动打开浏览器（' + why + '）：请手动访问 ' + url };
+      }
+      const result = { ok: true, ...answer, opened: true };
+      // 程序和浏览器都动了，但程序本身没起来：仍然算"打开了"，把人话提示一起带回去
+      if (started && started.ok === false) result.note = started.error;
+      return result;
+    } catch (error) {
+      return { ok: false, ...answer, opened: false, error: '打开 NapCat 面板失败：' + errorText(error) };
     }
   }
 
@@ -353,5 +542,5 @@ export function createNapcatLauncher(deps = {}) {
     }
   }
 
-  return { start, status, qrcode, stop };
+  return { start, status, qrcode, stop, openWebUI };
 }

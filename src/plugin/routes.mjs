@@ -494,6 +494,10 @@ export function createApiHandler({ configStore, runtime, logger = null, now = ()
       if (method !== 'POST') return sendJson(res, { ok: false, error: '只接受 POST /napcat/stop' });
       return napcatCall('stop', res);
     }
+    if (suffix === '/napcat/open-webui') {
+      if (method !== 'POST') return sendJson(res, { ok: false, error: '只接受 POST /napcat/open-webui' });
+      return napcatCall('openWebUI', res);
+    }
     return sendJson(res, { ok: false, error: '未知接口：' + url.pathname });
   }
 

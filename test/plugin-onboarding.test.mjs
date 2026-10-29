@@ -198,14 +198,14 @@ const NO_API = {
   }
 };
 
-// 引导和白名单/目录都在「手动接入」Tab 里：Tab 也只切显示，所以断言按可见性跑时才要站对 Tab。
+// 引导卡与「更多设置」现在同在一页（已经没有 Tab 可站）：收起态只靠 display:none 藏起来，
+// 节点仍在树上，所以断言一律走 findVisible，才看得出用户到底能看见什么。
 function stateOf(config, extra) {
   const exports = pureExports();
   const base = {
     ...exports.createInitialState(),
     ...exports.snapshotFrom({ platforms: PLATFORMS }, { config, configPath: 'E:\\cfg\\config.json' }),
-    loading: false,
-    tab: 'manual'
+    loading: false
   };
   return { ...base, ...(extra || {}) };
 }

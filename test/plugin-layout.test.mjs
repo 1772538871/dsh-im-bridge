@@ -143,21 +143,22 @@ test('platformCards: 非数组、缺 id、非对象的垃圾数据都不会让�
   assert.deepEqual(Array.from(platformCards([null, 'x', { label: '没有 id' }, { id: 'ok', label: '可用' }], 'ok').map((c) => c.id)), ['ok']);
 });
 
-// ---------------- 2. 右栏：Tab / 步骤 / 向导文案 ----------------
+// ---------------- 2. 单页面：没有 Tab，只有步骤与向导文案 ----------------
 
-test('tabsOf: 两个 Tab，默认选中「正在接入」', () => {
-  const { tabsOf } = loadClient();
-  const tabs = tabsOf();
-  assert.deepEqual(Array.from(tabs.map((t) => t.label)), ['正在接入', '手动接入']);
-  assert.deepEqual(Array.from(tabs.map((t) => t.id)), ['connect', 'manual']);
-  assert.deepEqual(Array.from(tabs.map((t) => t.active)), [true, false]);
+// 接入页现在只有一块：平台卡片 + 接入卡片。Tab 拆掉之后，"切页"这件事必须彻底不存在，
+// 否则用户还是要在两个半页之间找东西。
+test('单页面: 客户端不再有 Tab 判定函数，初始状态里也没有 tab 字段', () => {
+  const exports = loadClient();
+  assert.equal(typeof exports.tabsOf, 'undefined', 'tabsOf 应该随两个 Tab 一起删掉');
+  const initial = exports.createInitialState();
+  assert.equal('tab' in initial, false, 'state.tab 不该再存在');
 });
 
-test('tabsOf: 传 manual 时选中项跟着换，只有一个 active', () => {
-  const { tabsOf } = loadClient();
-  const tabs = tabsOf('manual');
-  assert.equal(tabs.filter((t) => t.active).length, 1);
-  assert.equal(tabs.filter((t) => t.active)[0].id, 'manual');
+test('单页面: 传入旧状态里的 tab 也不会改变渲染（没有可切的分支）', () => {
+  const { DshBotSection } = loadClient(sectionState({ tab: 'manual' }));
+  const text = textOf(DshBotSection({ close: () => {} }));
+  assert.equal(text.includes('手动接入'), false, text);
+  assert.equal(text.includes('正在接入'), false, text);
 });
 
 test('stepsOf: 官方机器人三步就是手机上要做的三个动作', () => {
@@ -310,17 +311,16 @@ function sectionState(extra) {
   return { ...base, ...snap, loading: false, status: { running: true, enabled: true, platform: 'qq-official' }, statusAt: Date.now(), ...extra };
 }
 
-test('渲染: 左栏是平台卡片，右栏顶部是 Tab + 状态药丸', () => {
+test('渲染: 上面平台卡片、下面接入卡片，顶部只留状态药丸（没有 Tab）', () => {
   const { DshBotSection } = loadClient(sectionState());
   const element = DshBotSection({ close: () => {} });
   const text = textOf(element);
-  assert.ok(text.includes('正在接入'), text);
-  assert.ok(text.includes('手动接入'), text);
   assert.ok(text.includes('1 / 1 在线'), text);
-  assert.ok(text.includes('QQ 官方机器人'), '左栏卡片用 /platforms 的名称：' + text);
+  assert.ok(text.includes('更多设置'), '常用字段收进「更多设置」：' + text);
+  assert.ok(text.includes('QQ 官方机器人'), '平台卡片用 /platforms 的名称：' + text);
   assert.ok(text.includes('即将支持'), 'wechat 卡片要标注即将支持：' + text);
   const pressed = findAll(element, (n) => n.props && Object.prototype.hasOwnProperty.call(n.props, 'aria-pressed'));
-  assert.ok(pressed.length >= 5, '三张卡片 + 两个 Tab 都是可选中控件：' + pressed.length);
+  assert.equal(pressed.length, 3, '只有三张平台卡片是可选中控件（Tab 已经删掉）：' + pressed.length);
   const disabled = findAll(element, (n) => n.type === 'button' && n.props.disabled === true);
   assert.ok(disabled.some((n) => textOf(n).includes('微信')), 'wechat 卡片必须是禁用按钮');
 });
@@ -384,7 +384,8 @@ test('导出保留: 既有纯函数与新增布局函数同时在', () => {
     'buildConfig',
     'describeTestResult',
     'platformCards',
-    'tabsOf',
+    'napcatWsLine',
+    'onebotFormPatch',
     'stepsOf',
     'describeBindingCard',
     'layoutStyle'
