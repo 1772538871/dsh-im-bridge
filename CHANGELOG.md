@@ -2,6 +2,13 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，语义化版本。
 
+## [0.9.9] - 2026-10-29
+
+### 修复
+- **NapCat 明明在跑却显示「未启动」**：`/napcat/status` 原来只探 `qqNapcat.port`（默认 3001）。
+  实际 NapCat 首次启动往往只开 WebUI(6099) 与 OneBot HTTP(3000)，WS 要配了才有。
+  现在同时探 3001/3000/6099，任一在听就算"在跑"，并返回 `ports` 明细。
+
 ## [0.9.8] - 2026-10-23
 
 ### 新增

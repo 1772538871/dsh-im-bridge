@@ -20,6 +20,8 @@ export const QRCODE_MIN_BYTES = 100;
 export const LOGIN_QUIET_MS = 60000;
 export const DEFAULT_NAPCAT_PORT = 3001;
 export const CONNECT_TIMEOUT_MS = 500;
+// NapCat 的 WebUI(6099) 与 OneBot HTTP(3000)：用来判断它到底在不在跑
+export const EXTRA_PORTS = [3000, 6099];
 
 export const MSG_NO_HOME = '还没填 NapCat 安装目录：在高级设置里填一次（例如 D:\\NapCat），之后就只用点启动';
 export const MSG_NO_QRCODE = '还没生成二维码：先点一键启动，等它出码（一般 5–20 秒）';
@@ -289,12 +291,18 @@ export function createNapcatLauncher(deps = {}) {
     const port = portValue();
     try {
       if (home === '') return { ok: false, listening: false, loggedIn: null, homeDir: '', port, error: MSG_NO_HOME };
-      const listening = await probePort(netApi, '127.0.0.1', port, connectTimeoutMs);
-      if (!listening) return { ok: true, listening: false, loggedIn: null, homeDir: home, port };
+      // NapCat 可能只开了 WebUI(6099) 与 OneBot HTTP(3000)，WS 端口还没开：
+      // 只要任一端口在听，就说明它确实在跑（否则界面会误报「未启动」）
+      const candidates = [port, ...EXTRA_PORTS.filter((item) => item !== port)];
+      const probed = await Promise.all(candidates.map((item) => probePort(netApi, '127.0.0.1', item, connectTimeoutMs)));
+      const ports = {};
+      candidates.forEach((item, index) => { ports[item] = probed[index] === true; });
+      const listening = probed.some((hit) => hit === true);
+      if (!listening) return { ok: true, listening: false, loggedIn: null, homeDir: home, port, ports };
       const qr = await readQrCode(home);
       if (!qr.ok) {
         // 端口通但没有图：可能刚登录完把图删了，也可能还没出码。两种都说不准，如实给 null
-        return { ok: true, listening: true, loggedIn: null, homeDir: home, port, qrHint: qr.error };
+        return { ok: true, listening: true, loggedIn: null, homeDir: home, port, ports, qrHint: qr.error };
       }
       const ageMs = Math.max(0, Number(clock()) - qr.mtimeMs);
       return {
@@ -303,6 +311,7 @@ export function createNapcatLauncher(deps = {}) {
         loggedIn: ageMs >= LOGIN_QUIET_MS,
         homeDir: home,
         port,
+        ports,
         qrcodeAt: qr.mtimeMs,
         qrcodeAgeMs: ageMs
       };
