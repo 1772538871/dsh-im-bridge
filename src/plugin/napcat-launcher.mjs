@@ -208,7 +208,8 @@ export function createNapcatLauncher(deps = {}) {
     killImpl = null,
     nodePath = '',
     connectTimeoutMs = CONNECT_TIMEOUT_MS,
-    openImpl = null
+    openImpl = null,
+    fetchImpl = null
   } = deps;
 
   const fsApi = fsImpl || {
@@ -247,6 +248,20 @@ export function createNapcatLauncher(deps = {}) {
   function portValue() {
     const port = Number(napcatConfig().port);
     return Number.isFinite(port) && port >= 1 && port <= 65535 ? Math.floor(port) : DEFAULT_NAPCAT_PORT;
+  }
+
+  /** 只判断"这个地址能不能回一次 HTTP"，不关心内容。 */
+  async function probeHttp(url, timeoutMs) {
+    if (typeof fetchImpl !== 'function') return false;
+    try {
+      const controller = typeof AbortController === 'function' ? new AbortController() : null;
+      const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+      const res = await fetchImpl(url, controller ? { signal: controller.signal } : {});
+      if (timer) clearTimeout(timer);
+      return !!(res && res.ok !== false);
+    } catch {
+      return false;
+    }
   }
 
   function existsPath(target) {
@@ -455,7 +470,7 @@ export function createNapcatLauncher(deps = {}) {
       const probed = await Promise.all(candidates.map((item) => probePort(netApi, '127.0.0.1', item, connectTimeoutMs)));
       let webui = null;
       try {
-        const w = await readWebui(home);
+        const w = await findLiveWebUi(home);
         webui = { port: w.port, token: w.token, url: 'http://127.0.0.1:' + w.port + '/webui' + (w.token === '' ? '' : '?token=' + encodeURIComponent(w.token)) };
       } catch { webui = null; }
       const ports = {};
@@ -489,11 +504,28 @@ export function createNapcatLauncher(deps = {}) {
    * 「打开 NapCat 面板」：确保程序在跑，再用系统浏览器打开它的 WebUI，并把令牌一起回给前端。
    * 端口/令牌来自 NapCat 自己的 webui.json；读不到就是 6099 + 空令牌（那就让人自己输）。
    */
+  /**
+   * webui.json 里写的端口不一定真的通：本机 6099 曾被 IDE 的 java 占着，
+   * NapCat 自己绑在 IPv6 [::]:6099 上，浏览器打 127.0.0.1:6099 命中的是别人。
+   * 所以这里按"谁能真的响应 /webui"来选端口，从配置端口往上找 12 个。
+   */
+  async function findLiveWebUi(home) {
+    const base = await readWebui(home);
+    const tried = [];
+    for (let offset = 0; offset < 12; offset += 1) {
+      const port = base.port + offset;
+      tried.push(port);
+      const ok = await probeHttp('http://127.0.0.1:' + port + '/webui', 1500);
+      if (ok) return { port, token: base.token, tried };
+    }
+    return { port: base.port, token: base.token, tried };
+  }
+
   async function openWebUI() {
     const home = homeDirValue();
     let webui = { port: WEBUI_DEFAULT_PORT, token: '' };
     try {
-      webui = await readWebui(home);
+      webui = await findLiveWebUi(home);
     } catch {
       // 读不到面板配置就只能按默认端口开，别把整件事搞失败
     }

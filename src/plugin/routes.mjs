@@ -253,7 +253,7 @@ export function createApiHandler({ configStore, runtime, logger = null, now = ()
   let napcatLauncher = launcher;
   function launcherForNapcat() {
     if (napcatLauncher === null) {
-      napcatLauncher = createNapcatLauncher({ config: () => configStore.read().config, logger, now });
+      napcatLauncher = createNapcatLauncher({ config: () => configStore.read().config, logger, now , fetchImpl: typeof fetch === 'function' ? fetch : null });
     }
     return napcatLauncher;
   }

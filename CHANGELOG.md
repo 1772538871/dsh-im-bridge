@@ -2,6 +2,17 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，语义化版本。
 
+## [0.9.15] - 2026-10-29
+
+### 修复
+- **「打开 NapCat 面板」打不开的真正原因**：NapCat 把 WebUI 绑在 **IPv6 `[::]:6099`**，而本机 6099 的 IPv4 被别的程序（IDE 的 java）占着。
+  浏览器访问 `127.0.0.1:6099` 命中那个程序，于是永远 `ERR_EMPTY_RESPONSE`；`http://[::1]:6099/webui` 其实能开。
+- `/napcat/open-webui` 与 `/napcat/status` 改用**实测可用端口**：从 `webui.json` 的端口起往上探 12 个，谁能真正回 `/webui` 就用谁。
+  真实 `fetch` 由 routes 注入；单测不注入 → 保留原行为，不打真网络。
+
+### 说明
+- 本机 NapCat WebUI 已改绑 `127.0.0.1:6100`：`http://127.0.0.1:6100/webui?token=…`
+
 ## [0.9.14] - 2026-10-29
 
 ### 修复
