@@ -63,6 +63,51 @@ function dayEndMs(name) {
   return new Date(y, m - 1, d, 23, 59, 59, 999).getTime();
 }
 
+/**
+ * 从文件头判断真实格式：QQ 给表情包的 url 常常没有后缀（或后缀与内容不符），
+ * 我们早先就因此把一张 GIF89a 存成了 .jpg —— 再发出去动图就死了。
+ */
+export function sniffImageExt(bytes) {
+  const buf = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes ?? []);
+  if (buf.length >= 6) {
+    const head = buf.subarray(0, 6).toString('latin1');
+    if (head === 'GIF87a' || head === 'GIF89a') return 'gif';
+  }
+  if (buf.length >= 8 && buf.subarray(0, 8).toString('latin1') === '\x89PNG\r\n\x1a\n') return 'png';
+  if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'jpg';
+  if (buf.length >= 12 && buf.subarray(0, 4).toString('latin1') === 'RIFF' && buf.subarray(8, 12).toString('latin1') === 'WEBP') return 'webp';
+  return '';
+}
+
+/**
+ * 落盘后校正图片扩展名：内容是真的 GIF 却叫 .jpg，发出去就变静图/打不开。
+ * 只在 kind=image 且文件头能判定时改名，其它情况一律不动。
+ */
+async function fixImageExt(filePath, kind) {
+  if (kind !== 'image') return filePath;
+  let head;
+  try {
+    const handle = await open(filePath, 'r');
+    try {
+      head = Buffer.alloc(16);
+      await handle.read(head, 0, 16, 0);
+    } finally {
+      await handle.close();
+    }
+  } catch {
+    return filePath;
+  }
+  const real = sniffImageExt(head);
+  if (real === '' || extname(filePath).toLowerCase() === '.' + real) return filePath;
+  const next = filePath.slice(0, filePath.length - extname(filePath).length) + '.' + real;
+  try {
+    await rename(filePath, next);
+    return next;
+  } catch {
+    return filePath;
+  }
+}
+
 export function createStorage(options) {
   const opts = options || {};
   const config = opts.config || {};
@@ -95,7 +140,7 @@ export function createStorage(options) {
   const tooLarge = (bytes) =>
     new StorageError('FILE_TOO_LARGE', '附件超过上限 ' + maxFileBytes + ' 字节（实际 ' + bytes + ' 字节）');
 
-  function targetFor(kind, chatInfo, filename, ext, ts) {
+function targetFor(kind, chatInfo, filename, ext, ts) {
     return attachmentPath({ rootDir, chat: chatInfo, kind, filename, ext, ts });
   }
 
@@ -139,8 +184,10 @@ export function createStorage(options) {
     }
     await rename(tmp, finalPath);
     const sha256 = createHash('sha256').update(buf).digest('hex');
+    const fixed = await fixImageExt(finalPath, o.kind || 'file');
+    if (fixed !== finalPath) log('debug', '按真实格式改名 ' + fixed);
     log('debug', '附件已保存 ' + finalPath + '（' + bytes + ' 字节）');
-    return { path: finalPath, bytes, sha256 };
+    return { path: await fixImageExt(finalPath, o.kind || 'file'), bytes, sha256 };
   }
 
   async function saveFromUrl(url, saveOpts) {
