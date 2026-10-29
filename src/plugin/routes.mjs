@@ -10,6 +10,7 @@ import { createQqBotClient } from '../qqbot/client.mjs';
 import { createWechatClient } from '../wechat/client.mjs';
 import { PERSONA_FILE, JOURNAL_FILE, promptsDirOf, splitJournalEntries } from '../journal.mjs';
 import { appendLesson, deleteLessonAt, readLessons } from '../lessons.mjs';
+import { EXAMPLES_KEEP, appendExample, clearExamples, readExamples } from '../examples.mjs';
 import { listStickers, removeSticker } from '../stickers.mjs';
 
 export const API_PREFIX = '/dsh-bot/api';
@@ -17,7 +18,7 @@ export const MAX_BODY_BYTES = 64 * 1024;
 export const MAX_TAIL_LINES = 500;
 const DEFAULT_TAIL_LINES = 100;
 const CONTROL_ACTIONS = ['start', 'stop', 'restart'];
-// 人设 / 你教过的 / 日记 / 表情库：设置页底部四块记忆的落地参数
+// 人设 / 你教过的 / 对话示例 / 日记 / 表情库：设置页底部五块记忆的落地参数
 export const PERSONA_MAX_CHARS = 20000;
 export const JOURNAL_UI_COUNT = 5;
 // 数据目录在设置页已经没有入口了：配置里留空时按这个默认位置走
@@ -503,14 +504,14 @@ export function createApiHandler({ configStore, runtime, logger = null, now = ()
 
 
   // ---------------- 人设与记忆（设置页底部那一块） ----------------
-  // 四份文件都在 storage.rootDir 下：prompts/persona.md、prompts/lessons.md、
-  // prompts/journal.md、stickers/index.json。读不到（还没有这份文件）不算错误：
+  // 五份文件都在 storage.rootDir 下：prompts/persona.md、prompts/lessons.md、
+  // prompts/examples.md、prompts/journal.md、stickers/index.json。读不到（还没有这份文件）不算错误：
   // 空列表就是实话，页面照常渲染，用户从"一条都没有"开始加。
 
   function dataRootOf() {
     const view = configStore.read();
     const root = textOf(view && view.config && view.config.storage ? view.config.storage.rootDir : '');
-    // 数据目录不再出现在设置页：留空就按默认位置走，别让四块记忆因为一个空串存不下
+    // 数据目录不再出现在设置页：留空就按默认位置走，别让五块记忆因为一个空串存不下
     return root === '' ? DEFAULT_DATA_ROOT : root;
   }
 
@@ -595,6 +596,40 @@ export function createApiHandler({ configStore, runtime, logger = null, now = ()
     const removed = await deleteLessonAt({ dataDir: dataRootOf(), index });
     if (!removed.ok) return sendJson(res, { ok: false, error: removed.error, lessons: [] });
     return sendJson(res, { ok: true, removed: removed.removed, lessons: removed.lessons });
+  }
+
+  // 对话示例：整块读写 prompts/examples.md，列表恒为"新的在前"
+  function examplesView() {
+    return readExamples({ rootDir: dataRootOf(), limit: EXAMPLES_KEEP });
+  }
+
+  function getExamples(res) {
+    const examples = examplesView();
+    return sendJson(res, { ok: true, examples, empty: examples.length === 0 });
+  }
+
+  async function postExamples(req, res) {
+    const type = String(req?.headers?.['content-type'] ?? '').toLowerCase();
+    if (!type.includes('application/json')) {
+      return sendJson(res, { ok: false, error: 'content-type 必须是 application/json' });
+    }
+    const body = await readJson(req);
+    if (!body.ok) return sendJson(res, { ok: false, error: body.error });
+    const value = isPlainObject(body.value) ? body.value : {};
+    const raw = typeof value.text === 'string' ? value.text : '';
+    if (raw.trim() === '') {
+      return sendJson(res, { ok: false, error: '要存哪段对话？把「我：…」「它：…」这样的几句粘进来再点「存成示例」' });
+    }
+    // 长度与解析都在 examples.mjs 里判：页面与提示词看到的是同一条规矩
+    const added = await appendExample({ rootDir: dataRootOf(), text: raw, now: now() });
+    if (!added.ok) return sendJson(res, { ok: false, error: added.error, examples: examplesView() });
+    return sendJson(res, { ok: true, added: added.added, examples: examplesView() });
+  }
+
+  async function deleteExamples(req, res) {
+    const cleared = await clearExamples({ rootDir: dataRootOf() });
+    if (!cleared.ok) return sendJson(res, { ok: false, error: cleared.error, examples: examplesView() });
+    return sendJson(res, { ok: true, examples: examplesView() });
   }
 
   async function getJournal(res) {
@@ -708,7 +743,7 @@ export function createApiHandler({ configStore, runtime, logger = null, now = ()
       if (method !== 'POST') return sendJson(res, { ok: false, error: '只接受 POST /napcat/open-webui' });
       return napcatCall('openWebUI', res);
     }
-    // 人设与记忆：四块各自 GET / 写，全部 HTTP 200 + {ok}
+    // 人设与记忆：五块各自 GET / 写，全部 HTTP 200 + {ok}
     if (suffix === '/persona') {
       if (method === 'GET') return getPersona(res);
       if (method === 'PUT') return putPersona(req, res);
@@ -719,6 +754,12 @@ export function createApiHandler({ configStore, runtime, logger = null, now = ()
       if (method === 'POST') return postLessons(req, res);
       if (method === 'DELETE') return deleteLessons(req, res);
       return sendJson(res, { ok: false, error: '只接受 GET / POST / DELETE /lessons' });
+    }
+    if (suffix === '/examples') {
+      if (method === 'GET') return getExamples(res);
+      if (method === 'POST') return postExamples(req, res);
+      if (method === 'DELETE') return deleteExamples(req, res);
+      return sendJson(res, { ok: false, error: '只接受 GET / POST / DELETE /examples' });
     }
     if (suffix === '/journal') {
       if (method !== 'GET') return sendJson(res, { ok: false, error: '只接受 GET /journal（日记只读）' });

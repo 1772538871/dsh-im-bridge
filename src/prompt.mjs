@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { EXAMPLES_PROMPT_LIMIT, EXAMPLES_PROMPT_LINE_CHARS, formatForPrompt, readExamples } from './examples.mjs';
 import { JOURNAL_TAIL_CHARS, JOURNAL_TAIL_COUNT, readJournalTail } from './journal.mjs';
 import { readLessonsTail } from './lessons.mjs';
 import { PROMPT_NOTE_MAX_CHARS, PROMPT_STICKER_LIMIT, pickStickersForPrompt } from './stickers.mjs';
@@ -17,6 +18,7 @@ const USER_SECTION_TITLE = "[用户消息]";
 export const JOURNAL_SECTION_TITLE = "[最近日记]";
 // 用户手把手教过的说法：优先级高于人格卡（他亲口说过要这样答）
 export const LESSONS_SECTION_TITLE = "[用户教过的]";
+// 对话示例：用户粘来的真实聊天记录（标题与说明在 examples.mjs 里，由 formatForPrompt 拼好）
 // 收藏的表情：库空时整段不出现，提示词与此前逐字一致
 export const STICKERS_SECTION_TITLE = "[表情库]";
 // 只给"怎么用"，不劝它发：表情发错了比不发更像被打断
@@ -156,6 +158,13 @@ export function buildPrompt({ config, message, savedAttachments = [], voiceTrans
   });
   // 用户亲口教过的说法：优先级最高，紧跟在角色设定之后
   const lessons = readLessonsTail({ dataDir: dir, fsImpl });
+  // 对话示例：给例子比写形容词有效，所以它紧跟在「用户教过的」后面；库空时整段不出现
+  const examples = readExamples({
+    rootDir: dir,
+    limit: EXAMPLES_PROMPT_LIMIT,
+    maxCharsPerLine: EXAMPLES_PROMPT_LINE_CHARS,
+    fsImpl,
+  });
   // 表情库跟着数据目录走；库空（或目录没配）时返回空数组，这一段就不出现
   const stickers = pickStickersForPrompt({
     rootDir: dir,
@@ -163,11 +172,14 @@ export function buildPrompt({ config, message, savedAttachments = [], voiceTrans
     noteMaxChars: PROMPT_NOTE_MAX_CHARS,
     fsImpl,
   });
-  if (sections.length === 0 && journal.length === 0 && lessons.length === 0 && stickers.length === 0) return body;
+  if (sections.length === 0 && journal.length === 0 && lessons.length === 0 && stickers.length === 0 && examples.length === 0) {
+    return body;
+  }
 
   const blocks = sections.map((section) => section.title + "\n" + section.body.join("\n"));
   // 日记排在角色卡之后、"用户消息"之前：先说我是谁，再说我最近在想什么
   if (lessons.length > 0) blocks.push(LESSONS_SECTION_TITLE + "\n" + lessons.map((item) => "- " + item.body).join("\n"));
+  if (examples.length > 0) blocks.push(formatForPrompt(examples));
   if (journal.length > 0) blocks.push(JOURNAL_SECTION_TITLE + "\n" + journal.join("\n\n"));
   // 表情库紧贴用户消息：要发就发在这一轮，翻回去找容易忘了上下文
   if (stickers.length > 0) {
